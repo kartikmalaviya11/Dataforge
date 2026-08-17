@@ -17,10 +17,13 @@ pytest>=8.0.0
 pytest-cov>=4.1.0        # Coverage reporting
 hypothesis>=6.90.0       # Property-based testing for edge cases
 
-# Optional: Streamlit (Phase 27 only)
-# streamlit>=1.35.0
+
 
 # Development
 # black>=24.0.0          # Formatting (optional)
 # ruff>=0.4.0            # Linting (optional)
 # mypy>=1.9.0            # Type checking (optional)
+
+streamlit>=1.35.0
+plotly>=5.20.0
+
