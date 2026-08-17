@@ -256,9 +256,25 @@ SQL Validation
 Download Reports
 ```
 
-### Dashboard Preview
+### Dashboard Overview
 
-Screenshots will be added here.
+![DATAFORGE Dashboard Overview](docs/images/overview.png)
+
+### Data Quality
+
+![DATAFORGE Data Quality](docs/images/data-quality.png)
+
+### KPI Recommendations
+
+![DATAFORGE KPI Recommendations](docs/images/kpi-recommendations.png)
+
+### DAX Measures
+
+![DATAFORGE DAX Measures](docs/images/dax-measures.png)
+
+### SQL Validation
+
+![DATAFORGE SQL Validation](docs/images/sql-validation.png)
 
 ---
 
