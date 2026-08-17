@@ -1,0 +1,44 @@
+rules:
+  - name: "Age Must Be Realistic"
+    type: "range"
+    column: "age"
+    min: 18
+    max: 120
+    severity: "HIGH"
+  
+  - name: "Valid Statuses"
+    type: "allowed_values"
+    column: "status"
+    values: ["active", "pending", "cancelled"]
+    severity: "MEDIUM"
+
+  - name: "Delivery After Order"
+    type: "comparison"
+    column_a: "delivery_date"
+    operator: ">="
+    column_b: "order_date"
+    severity: "HIGH"
+
+  - name: "Positive Quantity"
+    type: "range"
+    column: "quantity"
+    min: 1
+    severity: "MEDIUM"
+
+  - name: "Positive Price"
+    type: "range"
+    column: "price"
+    min: 0
+    severity: "MEDIUM"
+
+  - name: "Valid Discount"
+    type: "range"
+    column: "discount"
+    min: 0.0
+    max: 1.0
+    severity: "LOW"
+
+  - name: "Unique Customers"
+    type: "uniqueness"
+    column: "customer_id"
+    severity: "CRITICAL"

@@ -1,0 +1,61 @@
+# Phase 5 Business Rule Engine configuration.
+#
+# This file is loaded by src/rules.py (load_rules / RuleEngine.from_yaml)
+# and directly controls rule behavior -- rules are NOT hard-coded in
+# Python. Edit this file to change what gets checked; no code changes
+# are needed.
+#
+# Supported rule types:
+#   required_column        - a column must exist in the dataset
+#   range                   - numeric values must fall within [min, max]
+#   allowed_values          - values must be one of an explicit set
+#   uniqueness               - values in a column must not repeat
+#   comparison               - a relationship must hold between two columns
+#   referential_integrity    - values must exist in a parent dataset/column
+#
+# Every rule requires: name (unique), type, severity.
+# severity must be one of: INFO, LOW, MEDIUM, HIGH, CRITICAL.
+#
+# This configuration has been specifically adapted for Ecommerce_Sales_Data.xlsx
+
+rules:
+  - name: customer_id_required
+    type: required_column
+    column: Customer_ID
+    severity: HIGH
+
+  - name: order_id_required
+    type: required_column
+    column: Order_ID
+    severity: HIGH
+
+  - name: valid_age
+    type: range
+    column: Age
+    min: 18
+    max: 100
+    severity: HIGH
+
+  - name: valid_quantity
+    type: range
+    column: Quantity
+    min: 1
+    severity: MEDIUM
+
+  - name: valid_discount_percent
+    type: range
+    column: Discount
+    min: 0.0
+    max: 1.0
+    severity: MEDIUM
+
+  - name: valid_status
+    type: allowed_values
+    column: Order_Status
+    values:
+      - Delivered
+      - Processing
+      - Returned
+      - Shipped
+      - Cancelled
+    severity: MEDIUM

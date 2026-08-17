@@ -1,0 +1,26 @@
+# Core data analysis
+pandas>=2.2.0
+openpyxl>=3.1.0          # Excel .xlsx support
+pyyaml>=6.0              # Configurable business rules
+
+# SQL / Analytical engine
+duckdb>=1.0.0            # Embedded analytical SQL (zero-setup)
+sqlalchemy>=2.0.0        # ORM/Core for database abstraction
+
+# CLI & Utilities
+typer>=0.12.0            # Modern CLI framework
+loguru>=0.7.0            # Structured logging
+rich>=13.7.0             # Pretty console output
+
+# Testing
+pytest>=8.0.0
+pytest-cov>=4.1.0        # Coverage reporting
+hypothesis>=6.90.0       # Property-based testing for edge cases
+
+# Optional: Streamlit (Phase 27 only)
+# streamlit>=1.35.0
+
+# Development
+# black>=24.0.0          # Formatting (optional)
+# ruff>=0.4.0            # Linting (optional)
+# mypy>=1.9.0            # Type checking (optional)

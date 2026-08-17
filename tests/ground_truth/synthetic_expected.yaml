@@ -1,0 +1,64 @@
+# Expected issues mapping for synthetic_dataset.csv
+# Uses Composite Key: (row_index, column, issue_type)
+# If a dataset level issue, row_index is null
+# If a whole row issue (like Duplicate Row), column is null
+expected_issues:
+  # Row 0 (Alice, original)
+  - row_index: 0
+    column: customer_id
+    issue_type: uniqueness
+
+  # Row 1 (Bob)
+  - row_index: 1
+    column: email
+    issue_type: INVALID_EMAIL
+  - row_index: 1
+    column: age
+    issue_type: range
+  - row_index: 1
+    column: "delivery_date / order_date"
+    issue_type: comparison
+  - row_index: 1
+    column: quantity
+    issue_type: range
+  - row_index: 1
+    column: price
+    issue_type: range
+  - row_index: 1
+    column: discount
+    issue_type: range
+
+  # Row 2 (Charles)
+  - row_index: 2
+    column: name
+    issue_type: MISSING_VALUE
+  - row_index: 2
+    column: age
+    issue_type: MISSING_VALUE
+  - row_index: 2
+    column: status
+    issue_type: allowed_values
+  - row_index: 2
+    column: order_date
+    issue_type: INVALID_DATE
+  
+  # Row 3 (Duplicate Alice)
+  - row_index: 3
+    column: null
+    issue_type: DUPLICATE_ROW
+  - row_index: 3
+    column: customer_id
+    issue_type: uniqueness
+
+  # Row 4 (Eve)
+  - row_index: 4
+    column: age
+    issue_type: range
+  - row_index: 4
+    column: status
+    issue_type: allowed_values
+  
+  # Row 5 (Frank)
+  - row_index: 5
+    column: delivery_date
+    issue_type: MISSING_VALUE

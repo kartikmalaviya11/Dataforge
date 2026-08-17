@@ -1,0 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+.env
+*.log
+
+# Data & Output (generated, not committed)
+data/*.csv
+data/*.xlsx
+data/*.parquet
+output/*
+powerbi/*
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.coverage.*
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/
+
+# Mypy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/

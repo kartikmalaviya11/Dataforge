@@ -1,0 +1,11 @@
+customer_id,name,email,age,status,order_date,delivery_date,quantity,price,discount
+1,Alice,alice@example.com,25,active,2023-01-01,2023-01-05,2,19.99,0.0
+2,Bob,bob.example.com,150,pending,2023-02-01,2023-01-30,-5,-10.0,2.5
+3,,charles@test.com,,ACTIVE,invalid_date,2023-03-05,1,100.0,0.1
+1,Alice,alice@example.com,25,active,2023-01-01,2023-01-05,2,19.99,0.0
+5,Eve,eve@example.com,17,unknown,2023-05-01,2023-05-10,1,50.0,0.5
+6,Frank,frank@example.com,30,active,2023-06-01,,10,15.50,0.2
+7,Grace,grace@example.com,40,active,2023-07-01,2023-07-05,3,45.0,0.0
+8,Heidi,heidi@example.com,35,pending,2023-08-01,2023-08-05,1,10.0,0.1
+9,Ivan,ivan@example.com,50,active,2023-09-01,2023-09-05,5,99.99,0.2
+10,Judy,judy@example.com,28,active,2023-10-01,2023-10-05,2,25.0,0.0

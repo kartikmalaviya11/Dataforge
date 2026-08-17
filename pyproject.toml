@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analytics-readiness-analyzer"
+version = "0.1.0"
+description = "Analytics Readiness & Data Quality Analyzer for Data Analyst portfolio"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "pyyaml>=6.0",
+    "duckdb>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "typer>=0.12.0",
+    "loguru>=0.7.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.90.0",
+]
+dev = [
+    "black>=24.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+]
+streamlit = ["streamlit>=1.35.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "ground_truth: Ground-truth accuracy tests",
+    "edge_case: Edge case tests",
+    "benchmark: Performance benchmarks",
+    "slow: Slow tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM", "T20"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
