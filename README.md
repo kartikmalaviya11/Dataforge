@@ -282,7 +282,7 @@ Download Reports
 
 The project currently has:
 
-**260 tests passing**
+**tests-260-passed**
 
 Testing covers:
 
