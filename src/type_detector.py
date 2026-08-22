@@ -34,12 +34,14 @@ SEMANTIC_TYPES = [
 
 def is_integer_semantic(series: pd.Series) -> bool:
     """Check if series represents integer values (no decimals)."""
-    numeric = pd.to_numeric(series, errors='coerce')
-    valid = numeric.dropna()
-    if valid.empty:
+    non_null = series.dropna()
+    if non_null.empty:
         return False
-    # All values must be whole numbers
-    return bool((valid % 1 == 0).all())
+    numeric = pd.to_numeric(non_null, errors='coerce')
+    valid = numeric.dropna()
+    if len(valid) / len(non_null) < 0.5:
+        return False
+    return bool((valid % 1 == 0).mean() >= 0.8)
 
 
 def is_boolean_semantic(series: pd.Series) -> bool:
@@ -60,27 +62,29 @@ def is_boolean_semantic(series: pd.Series) -> bool:
 
 def is_date_semantic(series: pd.Series) -> bool:
     """Check if series represents dates (no time component)."""
-    # Skip numeric data - integers/floats can be parsed as timestamps
-    if pd.api.types.is_numeric_dtype(series):
+    non_null = series.dropna()
+    if non_null.empty:
         return False
-    parsed = pd.to_datetime(series, errors='coerce')
+    if pd.api.types.is_numeric_dtype(non_null):
+        return False
+    parsed = pd.to_datetime(non_null, errors='coerce')
     valid = parsed.dropna()
-    if valid.empty:
+    if len(valid) / len(non_null) < 0.5:
         return False
-    # Check if all times are midnight (00:00:00)
-    return bool((valid.dt.time == pd.Timestamp('00:00:00').time()).all())
+    return bool((valid.dt.time == pd.Timestamp('00:00:00').time()).mean() >= 0.8)
 
 
 def is_datetime_semantic(series: pd.Series) -> bool:
     """Check if series represents datetimes (has time component)."""
-    # Skip numeric data - integers/floats can be parsed as timestamps
-    if pd.api.types.is_numeric_dtype(series):
+    non_null = series.dropna()
+    if non_null.empty:
         return False
-    parsed = pd.to_datetime(series, errors='coerce')
+    if pd.api.types.is_numeric_dtype(non_null):
+        return False
+    parsed = pd.to_datetime(non_null, errors='coerce')
     valid = parsed.dropna()
-    if valid.empty:
+    if len(valid) / len(non_null) < 0.5:
         return False
-    # At least one non-midnight time
     return bool(not (valid.dt.time == pd.Timestamp('00:00:00').time()).all())
 
 
@@ -165,6 +169,8 @@ def _tokenize_column_name(column_name: str) -> list[str]:
     "customer id" all tokenize to ["customer", "id"]. This is what lets
     keyword matching check for whole-word matches instead of raw substrings.
     """
+    if not isinstance(column_name, str):
+        column_name = str(column_name)
     spaced = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', column_name)
     tokens = re.split(r'[^a-zA-Z0-9]+', spaced)
     return [t.lower() for t in tokens if t]
@@ -240,16 +246,57 @@ def is_category_semantic(series: pd.Series) -> bool:
 def detect_semantic_type(series: pd.Series, column_name: str, storage_type: str) -> tuple[str, float, str]:
     """
     Detect semantic type for a single column.
-
-    Returns:
-        tuple: (detected_type, confidence, evidence)
+    Uses column name as strong signal combined with value checking.
     """
     non_null = series.dropna()
     if non_null.empty:
         return "Unknown", 0.0, "All values are null"
 
-        # Try specific detectors in order of specificity
-    # Integer MUST come before Percentage AND Currency to avoid false positives on whole numbers
+    tokens = _tokenize_column_name(column_name)
+
+    # Email
+    if any(tok in {'email', 'email_address'} for tok in tokens):
+        return "Email", 0.95, "column name indicates email"
+
+    # Phone
+    if any(tok in {'phone', 'mobile', 'contact', 'phone_number'} for tok in tokens):
+        return "Phone", 0.95, "column name indicates phone"
+
+    # ID (Uniqueness expected)
+    if any(tok in {'id', 'key', 'pk', 'fk', 'uuid', 'guid'} for tok in tokens):
+        if is_id_semantic(series, column_name):
+            return "ID", 0.95, "column name indicates ID and high cardinality"
+        return "ID", 0.8, "column name indicates ID"
+
+    # Code (Identifier-like, but uniqueness NOT expected)
+    if any(tok in {'code', 'reference', 'ref', 'number', 'no', 'num', 'postal', 'zip', 'promo'} for tok in tokens):
+        return "Code", 0.8, "column name indicates non-unique code"
+
+    # Currency / Financial
+    if any(tok in {'sales', 'profit', 'price', 'cost', 'revenue', 'amount', 'total', 'subtotal'} for tok in tokens):
+        if is_currency_semantic(non_null):
+            return "Currency", 0.95, "column name indicates currency"
+        if is_integer_semantic(non_null):
+            return "Integer", 0.9, "column name indicates financial amount (integers)"
+        return "Decimal", 0.8, "column name indicates financial amount"
+
+    # Percentage
+    if any(tok in {'pct', 'percent', 'percentage', 'discount', 'margin', 'rate'} for tok in tokens):
+        return "Percentage", 0.95, "column name indicates percentage"
+
+    # Quantity
+    if any(tok in {'qty', 'quantity', 'count', 'units'} for tok in tokens):
+        if is_integer_semantic(non_null):
+            return "Integer", 0.95, "column name indicates quantity and values are integers"
+        return "Decimal", 0.8, "column name indicates quantity with mixed values"
+
+    # Date / DateTime
+    if any(tok in {'date', 'dt', 'created_at', 'updated_at', 'order_date'} for tok in tokens):
+        if is_datetime_semantic(non_null):
+            return "DateTime", 0.95, "column name indicates date and values have time"
+        return "Date", 0.95, "column name indicates date"
+
+    # Fallback to pure value-based detection for columns without strong name signals
     detectors = [
         ("Email", is_email_semantic, "email pattern match"),
         ("URL", is_url_semantic, "URL pattern match"),
@@ -259,7 +306,7 @@ def detect_semantic_type(series: pd.Series, column_name: str, storage_type: str)
         ("Date", is_date_semantic, "date-only values"),
         ("Integer", is_integer_semantic, "whole numbers only"),
         ("Percentage", is_percentage_semantic, "% symbol or 0-100 numeric"),
-        ("ID", lambda s: is_id_semantic(s, column_name), "high-cardinality key-like column"),
+        ("ID", lambda s: is_id_semantic(series, column_name), "high-cardinality key-like column"),
         ("Currency", is_currency_semantic, "currency pattern or 2-decimal numeric"),
         ("Category", is_category_semantic, "low cardinality"),
         ("Decimal", lambda s: pd.to_numeric(s, errors='coerce').notna().mean() > 0.8, "mostly numeric with decimals"),
@@ -269,8 +316,7 @@ def detect_semantic_type(series: pd.Series, column_name: str, storage_type: str)
     for sem_type, detector, evidence in detectors:
         try:
             if detector(non_null):
-                confidence = 0.95  # High confidence for positive pattern matches
-                # Adjust confidence for fallback types
+                confidence = 0.95
                 if sem_type in ("Decimal", "String", "Category", "ID"):
                     confidence = 0.7
                 return sem_type, confidence, evidence
@@ -311,6 +357,7 @@ def determine_status_and_action(
         "String": ["object", "string", "str"],
         "Category": ["object", "string", "str", "category"],
         "ID": ["object", "string", "str", "int", "int64"],
+        "Code": ["object", "string", "str", "int", "int64"],
         "Email": [],
         "Phone": [],
         "URL": [],

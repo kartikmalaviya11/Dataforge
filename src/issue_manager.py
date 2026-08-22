@@ -9,9 +9,15 @@ and provides remediation recommendations.
 from dataclasses import dataclass
 from typing import Any, Optional, List
 import hashlib
+from enum import Enum
 
 from .quality_engine import QualityIssue
 from .rules import RuleViolation
+
+class IssueClassification(Enum):
+    AUTO_FIXABLE = "AUTO_FIXABLE"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    UNSAFE_TO_FIX = "UNSAFE_TO_FIX"
 
 @dataclass
 class StandardizedIssue:
@@ -26,6 +32,47 @@ class StandardizedIssue:
     severity: str
     message: str
     recommendation: str
+    classification: IssueClassification = IssueClassification.UNSAFE_TO_FIX
+
+def _classify_issue(source: str, issue_type: str, column: Optional[str] = None) -> IssueClassification:
+    """
+    Deterministic classification of data quality and business rule issues.
+    """
+    # 1. AUTO_FIXABLE
+    if issue_type in ("BLANK_VALUE", "DUPLICATE_ROW"):
+        return IssueClassification.AUTO_FIXABLE
+
+    # 3. REVIEW_REQUIRED
+    # INVALID_NUMERIC and INVALID_DATE should require user approval since they can alter format or lose data (e.g. leading zeros)
+    if issue_type in ("INVALID_NUMERIC", "INVALID_DATE"):
+        return IssueClassification.REVIEW_REQUIRED
+
+    # 2. UNSAFE_TO_FIX
+    if issue_type == "DUPLICATE_ID":
+        return IssueClassification.UNSAFE_TO_FIX
+        
+    if issue_type == "INVALID_EMAIL":
+        return IssueClassification.UNSAFE_TO_FIX
+
+    if issue_type == "MISSING_VALUE":
+        if column:
+            col_lower = column.lower()
+            if "email" in col_lower or "id" in col_lower or "guid" in col_lower or "uuid" in col_lower:
+                return IssueClassification.UNSAFE_TO_FIX
+        return IssueClassification.REVIEW_REQUIRED
+
+    # 3. REVIEW_REQUIRED
+    if issue_type in ("INVALID_CATEGORY", "OUT_OF_RANGE", "CONSISTENCY_VIOLATION"):
+        return IssueClassification.REVIEW_REQUIRED
+
+    if source == "business_rule":
+        if issue_type in ("range", "allowed_values", "comparison"):
+            return IssueClassification.REVIEW_REQUIRED
+        elif issue_type in ("uniqueness", "referential_integrity", "required_column", "regex", "custom"):
+            return IssueClassification.UNSAFE_TO_FIX
+            
+    # Conservative fallback
+    return IssueClassification.UNSAFE_TO_FIX
 
 _QUALITY_SEVERITY_MAP = {
     "MISSING_VALUE": "LOW",
@@ -90,6 +137,7 @@ class IssueManager:
         )
         severity = _QUALITY_SEVERITY_MAP.get(issue.issue_type, "MEDIUM")
         recommendation = _QUALITY_RECOMMENDATION_MAP.get(issue.issue_type, "Review data quality issue.")
+        classification = _classify_issue(source="quality_check", issue_type=issue.issue_type, column=issue.column)
         
         return StandardizedIssue(
             issue_id=issue_id,
@@ -102,7 +150,8 @@ class IssueManager:
             expected_condition=issue.expected_condition or "",
             severity=severity,
             message=issue.description,
-            recommendation=recommendation
+            recommendation=recommendation,
+            classification=classification
         )
 
     def _normalize_rule_violation(self, issue: RuleViolation) -> StandardizedIssue:
@@ -114,6 +163,7 @@ class IssueManager:
             column=issue.column
         )
         recommendation = "Review business rule logic or correct data to meet business requirements."
+        classification = _classify_issue(source="business_rule", issue_type=issue.rule_type, column=issue.column)
         
         return StandardizedIssue(
             issue_id=issue_id,
@@ -126,5 +176,6 @@ class IssueManager:
             expected_condition=issue.expected_condition or "",
             severity=issue.severity,
             message=issue.message,
-            recommendation=recommendation
+            recommendation=recommendation,
+            classification=classification
         )

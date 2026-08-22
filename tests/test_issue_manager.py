@@ -82,3 +82,42 @@ def test_unknown_type_ignored():
     manager = IssueManager()
     results = manager.consolidate(["Not An Issue Object"])
     assert len(results) == 0
+
+from src.issue_manager import _classify_issue, IssueClassification
+
+def test_classify_issue_auto_fixable():
+    assert _classify_issue("quality_check", "BLANK_VALUE") == IssueClassification.AUTO_FIXABLE
+    assert _classify_issue("quality_check", "DUPLICATE_ROW") == IssueClassification.AUTO_FIXABLE
+
+def test_classify_issue_review_required():
+    # Test 2: A reviewable issue is classified as REVIEW_REQUIRED
+    assert _classify_issue("quality_check", "INVALID_CATEGORY") == IssueClassification.REVIEW_REQUIRED
+    assert _classify_issue("quality_check", "MISSING_VALUE", "Age") == IssueClassification.REVIEW_REQUIRED
+    assert _classify_issue("quality_check", "INVALID_NUMERIC") == IssueClassification.REVIEW_REQUIRED
+    assert _classify_issue("quality_check", "INVALID_DATE") == IssueClassification.REVIEW_REQUIRED
+    assert _classify_issue("business_rule", "range") == IssueClassification.REVIEW_REQUIRED
+    assert _classify_issue("business_rule", "allowed_values") == IssueClassification.REVIEW_REQUIRED
+
+def test_classify_issue_unsafe_to_fix():
+    # Test 3: An unsafe issue is classified as UNSAFE_TO_FIX
+    assert _classify_issue("quality_check", "DUPLICATE_ID") == IssueClassification.UNSAFE_TO_FIX
+    assert _classify_issue("quality_check", "MISSING_VALUE", "Customer_Email") == IssueClassification.UNSAFE_TO_FIX
+    assert _classify_issue("quality_check", "MISSING_VALUE", "customer_id") == IssueClassification.UNSAFE_TO_FIX
+    assert _classify_issue("quality_check", "INVALID_EMAIL") == IssueClassification.UNSAFE_TO_FIX
+    assert _classify_issue("business_rule", "uniqueness") == IssueClassification.UNSAFE_TO_FIX
+
+def test_classify_issue_representative():
+    # Test 4: Representative existing DATAFORGE issue types are classified correctly
+    manager = IssueManager()
+    qi = QualityIssue(row_index=None, column="email", issue_type="MISSING_VALUE", check_name="miss", description="miss")
+    results = manager.consolidate([qi])
+    assert results[0].classification == IssueClassification.UNSAFE_TO_FIX
+    
+    qi2 = QualityIssue(row_index=None, column="Salary", issue_type="INVALID_NUMERIC", check_name="num", description="num")
+    results2 = manager.consolidate([qi2])
+    assert results2[0].classification == IssueClassification.REVIEW_REQUIRED
+
+def test_classify_issue_unknown_safely_handled():
+    # Test 5: Unknown/unsupported issue types are handled safely and deterministically
+    assert _classify_issue("quality_check", "SOME_UNKNOWN_TYPE") == IssueClassification.UNSAFE_TO_FIX
+    assert _classify_issue("business_rule", "SOME_UNKNOWN_RULE") == IssueClassification.UNSAFE_TO_FIX
