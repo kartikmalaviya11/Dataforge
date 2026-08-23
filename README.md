@@ -1,430 +1,179 @@
-# DATAFORGE
+# DATAFORGE 2.0: The Deterministic Analytics Pre-Processor
 
-### From Raw Data to Trusted Insights
+DATAFORGE 2.0 is a robust, deterministic data engineering and quality-assurance pipeline designed to bridge the gap between raw, messy datasets (CSV/Excel) and Business Intelligence platforms like Power BI. 
 
-DATAFORGE is a deterministic analytics-readiness and data-quality platform that transforms raw CSV/XLSX datasets into trusted analytical outputs, KPI recommendations, DAX measures, SQL validation results, and Power BI-ready reports.
+## Problem It Solves
 
-Built as a portfolio-grade Data Analytics project using Python, Pandas, DuckDB, Streamlit, Plotly, and Power BI.
+Data professionals often receive "dirty" datasets containing trailing spaces, invalid dates, hidden duplicate rows, broken formulas, and ambiguous semantic types. Passing these directly into BI tools like Power BI or Tableau results in broken visuals, silent errors, and untrustworthy metrics.
 
-![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python\&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit\&logoColor=white)
-![DuckDB](https://img.shields.io/badge/DuckDB-SQL-FFF000)
-![Power BI](https://img.shields.io/badge/Power%20BI-Dashboard-F2C811?logo=powerbi\&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-260%20passed-22C55E)
+DATAFORGE 2.0 solves this by strictly validating, classifying, proposing fixes for, and exporting clean datasets—without relying on unpredictable AI magic or black-box mutations. Everything is deterministic, previewable, explicit, and tracked.
 
 ---
 
-## 🚀 What is DATAFORGE?
+## The DATAFORGE 2.0 Workflow
 
-Raw datasets often contain missing values, invalid values, duplicate records, inconsistent fields, and business-rule violations.
+DATAFORGE 2.0 implements a strict, multi-step pipeline accessible via a dark-mode Streamlit dashboard:
 
-DATAFORGE analyzes a dataset before it reaches the dashboarding stage.
-
-It answers questions such as:
-
-* Is the dataset ready for analytics?
-* What data-quality issues exist?
-* Which columns are valid and what do they represent?
-* Which business rules are violated?
-* What is the overall analytics-readiness score?
-* Which KPIs can actually be calculated?
-* Which DAX measures can be generated safely?
-* Do Python and SQL calculations agree?
-* What outputs are ready for Power BI?
-
-The goal is to move from:
-
-**Raw Data → Trusted Data → KPIs → BI-ready Outputs**
+1. **Upload**: Load raw `.csv` or `.xlsx` files into the system.
+2. **Analyze**: Run a deep profile over columns to calculate sparseness, distinct counts, and patterns.
+3. **Detect**: Systematically detect data quality issues (e.g., whitespace, exact duplicates, invalid numerics).
+4. **Explain**: Generate plain-English reasons explaining *why* an issue was flagged.
+5. **Classify**: Categorize every detected issue based on safety (see Issue Classifications below).
+6. **Suggest**: Generate specific, row-level or column-level repair proposals.
+7. **Preview**: Display all pending proposals in an interactive UI grid.
+8. **Approve/Reject**: Let the user explicitly check/uncheck which fixes should be applied.
+9. **Repair**: The Deterministic Repair Engine mutates the dataframe *only* where explicitly approved.
+10. **Re-validate**: Run the quality engine a second time on the repaired data.
+11. **Before/After**: Compare the initial dataset readiness against the post-repair readiness.
+12. **Export**: Package the cleaned data alongside comprehensive metadata and change-logs into a ZIP archive.
+13. **BI Ready**: Import the cleaned `.csv` or `.xlsx` and the auto-generated DAX/SQL into Power BI.
 
 ---
 
-## 🎯 Why DATAFORGE?
+## Issue Classifications
 
-Traditional dashboard workflows often begin with raw data and jump directly into visualization.
+Data mutation is inherently dangerous. DATAFORGE classifies every detected issue into one of three strict safety tiers:
 
-DATAFORGE adds an analytical validation layer first:
-
-**Ingest → Profile → Validate → Score → Recommend → Generate → Export**
-
-This helps reduce the risk of building dashboards on incomplete, inconsistent, or poorly understood data.
+* **`AUTO_FIXABLE`**: Deterministic fixes that are guaranteed to be safe (e.g., trimming trailing whitespace from strings, removing exact duplicate rows in flat files). These are checked for approval by default.
+* **`REVIEW_REQUIRED`**: Fixes that involve assumptions or type coercion (e.g., assuming `$100` means `100.0`, or guessing a date format). These require explicit, manual user approval and are unchecked by default.
+* **`UNSAFE_TO_FIX`**: Issues where no deterministic fix can be proposed without risk of data loss or structural damage (e.g., deleting rows in an Excel file that contains formulas or merged cells). These cannot be approved.
 
 ---
 
-## ✨ Key Features
+## Deterministic Repair Engine
 
-### 📥 Dataset Ingestion
-
-* CSV support
-* XLSX support
-* Dataset-level metadata
-* Safe handling of malformed inputs
-
-### 📊 Data Profiling
-
-* Row and column counts
-* Null counts and percentages
-* Unique values
-* Minimum / Maximum
-* Mean / Median
-* Storage-type detection
-
-### 🧠 Semantic Type Detection
-
-Automatically identifies useful semantic roles such as:
-
-* ID
-* Category
-* Currency
-* Percentage
-* Date / DateTime
-* Integer
-* String
-
-### 🔎 Data Quality Analysis
-
-Detects issues such as:
-
-* Missing values
-* Blank values
-* Duplicate rows
-* Duplicate IDs
-* Invalid emails
-* Invalid dates
-* Invalid numeric values
-* Range violations
-* Category violations
-* Consistency problems
-
-### 📋 Business Rule Engine
-
-Supports configurable rules such as:
-
-* Required columns
-* Numeric ranges
-* Allowed values
-* Uniqueness
-* Column comparisons
-* Referential integrity
-
-Rules are maintained separately in YAML configuration.
-
-### 📈 Analytics Readiness Scoring
-
-Produces a deterministic score from **0–100** across dimensions including:
-
-* Completeness
-* Validity
-* Consistency
-* Uniqueness
-* Rule Compliance
-
-### 💡 KPI Recommendation Engine
-
-Recommends KPIs only when required data is actually available.
-
-Examples:
-
-* Total Sales
-* Total Quantity
-* Total Orders
-* Distinct Customers
-* Average Sales
-* Average Order Value
-* Profit Margin
-
-Each KPI can be classified as:
-
-* `AVAILABLE`
-* `UNAVAILABLE`
-* `REQUIRES_REVIEW`
-
-### 🧮 DAX Measure Generator
-
-Generates Power BI-ready DAX suggestions for supported KPIs.
-
-Examples include:
-
-* `SUM`
-* `AVERAGE`
-* `DISTINCTCOUNT`
-* `DIVIDE`
-* Average Order Value
-* Profit Margin
-
-### 🗄️ SQL Validation
-
-Uses DuckDB to compare Python calculations with SQL equivalents.
-
-Validation states:
-
-* `MATCH`
-* `MISMATCH`
-* `NOT_AVAILABLE`
-
-Floating-point comparisons use tolerance-based matching where appropriate.
-
-### 📤 Power BI Preparation
-
-Generates Power BI-ready CSV outputs including:
-
-* Dataset profile
-* Column metadata
-* Quality issues
-* Quality summary
-* Readiness score
-* KPI recommendations
-* DAX measures
-
-### 🖥️ Streamlit Dashboard
-
-Provides an interactive dashboard for:
-
-* Dataset upload
-* Analysis
-* Data quality exploration
-* Semantic-type inspection
-* KPI recommendations
-* DAX measures
-* SQL validation
-* Report downloads
+The **Deterministic Repair Engine** is the execution core. It translates user approvals into concrete dataframe mutations.
+* It operates *exclusively* on approved instructions. Unapproved or pending proposals are completely ignored.
+* Operations are strictly scoped to the exact `row_index` of the approved instruction to prevent rogue column-sweeps.
+* It maintains a comprehensive `ChangeRecord` mapping exactly what was mutated, why, and what the before/after values were.
 
 ---
 
-## 🏗️ Architecture
+## Preview & Approval Workflow
 
-```text
-CSV / XLSX
-    │
-    ▼
-Data Ingestion
-    │
-    ▼
-Profiling
-    │
-    ▼
-Semantic Type Detection
-    │
-    ├──────────────────────┐
-    ▼                      ▼
-Quality Engine       Business Rules
-    │                      │
-    └──────────┬───────────┘
-               ▼
-        Issue Management
-               │
-               ▼
-       Readiness Scoring
-               │
-       ┌───────┼────────┐
-       ▼       ▼        ▼
-      KPI     DAX      SQL
-     Engine  Engine   Analyzer
-       │       │        │
-       └───────┼────────┘
-               ▼
-      Power BI-ready Outputs
-               │
-               ▼
-      Streamlit Dashboard
-```
+No silent mutations occur in DATAFORGE. Before any repairs are made, the `ProposalGenerator` generates a table of proposed fixes. The user is presented with a data grid where they can visually inspect the `Old Value` vs the `Proposed Value` and explicitly `Approve` or `Reject` the change. 
 
 ---
 
-## 🖥️ Streamlit Dashboard
+## Re-Validation and Before/After Comparison
 
-DATAFORGE includes a modern dark analytics dashboard for analyzing CSV and XLSX datasets without requiring users to manually place files into the project's `data/` directory.
+After the Repair Engine executes the approved fixes, DATAFORGE immediately triggers a **Re-Validation** pass. The `RevalidationEngine` runs the full quality check again, comparing the "Before" snapshot against the "After" snapshot.
 
-### Workflow
-
-```text
-Upload Dataset
-      ↓
-Analyze Dataset
-      ↓
-Overview
-      ↓
-Data Quality
-      ↓
-Data Types
-      ↓
-KPI Recommendations
-      ↓
-DAX Measures
-      ↓
-SQL Validation
-      ↓
-Download Reports
-```
-
-### Dashboard Overview
-
-![DATAFORGE Dashboard Overview](docs/images/overview.png)
-
-### Data Quality
-
-![DATAFORGE Data Quality](docs/images/data-quality.png)
-
-### KPI Recommendations
-
-![DATAFORGE KPI Recommendations](docs/images/kpi-recommendations.png)
-
-### DAX Measures
-
-![DATAFORGE DAX Measures](docs/images/dax-measures.png)
-
-### SQL Validation
-
-![DATAFORGE SQL Validation](docs/images/sql-validation.png)
+The UI displays clear metrics showing:
+* Total issues resolved
+* Remaining issues
+* Overall Analytics Readiness Score improvement (e.g., `81.3%` -> `95.0%`).
 
 ---
 
-## 🧪 Testing & Validation
+## Analytics Export & ZIP Architecture
 
-The project currently has:
+When the user clicks "Download Analytics Reports", DATAFORGE packages the entire context into a single ZIP file (`analytics_reports.zip`). 
 
-**tests-261-passed**
-
-Testing covers:
-
-* Unit testing
-* Integration testing
-* Ground-truth testing
-* Edge-case testing
-* KPI testing
-* DAX testing
-* SQL validation testing
-* Report generation
-* Streamlit integration
-
-The test suite is designed to protect earlier analytical phases from regressions introduced by later components.
+Depending on the export format chosen, the ZIP includes:
+* **Cleaned Dataset**: The repaired data ready for BI (`DATAFORGE_CLEANED.csv` or `.xlsx`).
+* **Metadata & Summary**: `dataset_profile.csv`, `quality_summary.csv`.
+* **Changes Made**: A strict audit log of every repair actually executed (`changes_made.csv`).
+* **Needs Review**: A log of pending or rejected proposals (`needs_review.csv`).
+* **KPIs & Measures**: `kpi_recommendations.csv`, `dax_measures.csv`.
 
 ---
 
-## 📊 Ground-Truth Benchmark
+## CSV vs Excel: Strict Safety Handling
 
-A controlled synthetic dataset is used to evaluate issue-detection performance.
+DATAFORGE supports both CSV and Excel, but treats them distinctly:
+* **CSV**: Handled as flat tabular data.
+* **Excel (XLSX)**: Requires specialized inspection via the `ExcelQuality` engine. Before any analysis occurs, DATAFORGE checks the workbook for:
+  * Formulas
+  * Merged cells
+  * Hidden rows/columns
+  * Macros
 
-| Metric          | Result |
-| --------------- | -----: |
-| True Positives  |     16 |
-| False Positives |      0 |
-| False Negatives |      0 |
-| Precision       |   100% |
-| Recall          |   100% |
-| F1 Score        |   100% |
-
-> These results are specific to the controlled synthetic benchmark and do not represent universal real-world accuracy.
+### Formula and Merged-Cell Safety Limitations
+If an Excel file contains formulas or merged cells, certain repairs (like `DUPLICATE_ROW` deletion) are strictly downgraded to `UNSAFE_TO_FIX`. Deleting a row in pandas does not update downstream Excel formulas, which would corrupt the workbook geometry. DATAFORGE strictly refuses to perform row-deletions on such files.
 
 ---
 
-## 📥 Input
+## KPIs, DAX, and DuckDB SQL Validation
 
-Supported file formats:
-
-* `.csv`
-* `.xlsx`
-
-The dataset should contain structured tabular data.
-
-Example fields:
-
-```text
-Order_ID
-Customer_ID
-Order_Date
-Category
-Quantity
-Sales
-Profit
-Discount
-```
+Beyond data cleaning, DATAFORGE accelerates BI development:
+* **KPI Recommendations**: Suggests relevant KPIs (e.g., `Total Sales`, `Average Profit`) based on detected semantic types.
+* **DAX Generation**: Auto-generates Power BI-ready DAX measure formulas based on the KPI recommendations.
+* **DuckDB SQL Validation**: Automatically generates and executes DuckDB SQL queries against the dataset in-memory to validate the logical correctness of the recommended KPIs before you ever open Power BI.
 
 ---
 
-## 📤 Outputs
+## Core Philosophy
 
-DATAFORGE generates Power BI-ready reports such as:
-
-```text
-output/
-├── dataset_profile.csv
-├── column_metadata.csv
-├── quality_issues.csv
-├── quality_summary.csv
-├── readiness_score.csv
-├── kpi_recommendations.csv
-└── dax_measures.csv
-```
+* **No AI/API Dependency**: DATAFORGE is 100% local and deterministic. There are no black-box LLM calls mutating your data.
+* **No Silent Mutation**: You always know exactly what changed and why.
+* **No Guessing**: If a semantic type or rule is ambiguous, DATAFORGE falls back to `UNAVAILABLE` rather than generating fake or misleading insights.
 
 ---
 
-## 🛠️ Tech Stack
+## Testing & Validation
 
-### Core
+DATAFORGE is backed by a massive, rigorous test suite protecting against regressions.
 
-* Python
-* Pandas
-* NumPy
+**Current Testing Result:**
+> **317 passed, 1 skipped**
 
-### Analytics & Data Quality
-
-* PyYAML
-* DuckDB
-
-### Interface
-
-* Streamlit
-* Plotly
-
-### Testing
-
-* Pytest
-* Hypothesis
-
-### Business Intelligence
-
-* Power BI
-* DAX
+The test suite covers:
+* Ground-truth validation
+* Excel integrity limits
+* Repair Engine strict scoping
+* Export structure integrity
+* Safety state machine (AUTO_FIXABLE vs UNSAFE)
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 Dataforge/
-│
 ├── app.py
-├── .gitignore
 ├── pyproject.toml
 ├── requirements.txt
-│
-├── config/
-│   └── rules.yaml
-│
 ├── docs/
-│   ├── ground_truth_report.md
-│   └── powerbi_dashboard_spec.md
-│
+│   └── images/
 ├── src/
 │   ├── ingestion.py
 │   ├── profiler.py
 │   ├── type_detector.py
+│   ├── excel_quality.py
 │   ├── quality_engine.py
 │   ├── rules.py
 │   ├── issue_manager.py
+│   ├── proposal_generator.py
+│   ├── repair_engine.py
+│   ├── revalidation.py
+│   ├── export_service.py
 │   ├── scoring.py
 │   ├── kpi_engine.py
 │   ├── dax_generator.py
 │   ├── sql_analyzer.py
 │   ├── report_generator.py
 │   └── main.py
-│
 └── tests/
+    ├── test_app_workflow.py
+    ├── test_excel_integrity.py
+    ├── test_excel_quality.py
+    ├── test_export.py
+    ├── test_issue_manager.py
+    ├── test_proposal.py
+    ├── test_quality_engine.py
+    ├── test_repair_engine.py
+    ├── test_revalidation.py
+    ├── test_rules.py
+    ├── test_scoring.py
+    ├── test_sql_analyzer.py
+    ├── test_targeted_fix.py
+    └── test_type_detector.py
 ```
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 ### 1. Clone the repository
 
@@ -455,110 +204,32 @@ pip install -r requirements.txt
 
 ---
 
-## ▶️ Run the Streamlit App
+## Usage
 
-Start the application:
+Start the Streamlit application:
 
 ```powershell
 streamlit run app.py
 ```
 
 Then:
-
 1. Upload a CSV or XLSX file.
-2. Select the business-rule configuration if required.
-3. Click **Analyze Dataset**.
-4. Explore the dashboard tabs.
-5. Download the generated reports.
+2. Click **Analyze Dataset**.
+3. Review the **Data Quality** tabs.
+4. Go to **Suggested Fixes** to preview and approve `AUTO_FIXABLE` and `REVIEW_REQUIRED` repairs.
+5. Click **Apply Approved Changes**.
+6. Review the **Before/After Validation**.
+7. Download the **Cleaned Dataset & Reports** ZIP file for Power BI.
 
 ---
 
-## 💻 CLI Usage
-
-The analytical engine can also be used without Streamlit.
-
-Example:
-
-```powershell
-python -m src.main analyze data/your_dataset.xlsx --rules config/rules.yaml --output output/
-```
-
-This runs the analytical pipeline and writes the generated reports to the specified output directory.
-
----
-
-## 📋 Business Rules
-
-Business rules are configured in:
-
-```text
-config/rules.yaml
-```
-
-Supported rule categories include:
-
-* Required columns
-* Range validation
-* Allowed values
-* Uniqueness
-* Comparisons
-* Referential integrity
-
-Rules are configuration-driven rather than hard-coded into the quality engine.
-
----
-
-## 🔎 Data Quality Philosophy
-
-DATAFORGE follows several design principles:
-
-* Deterministic
-* Explainable
-* Testable
-* Configuration-driven
-* No silent assumptions
-* No invented KPIs
-* No fake DAX
-* No fabricated benchmark results
-* Graceful handling of unsupported or ambiguous inputs
-
-The system prefers a clear `UNAVAILABLE` or `NOT_AVAILABLE` state over generating misleading analytical results.
-
----
-
-## ⚠️ Known Limitations
-
-* KPI recommendations are based on semantic detection and deterministic heuristics.
-* Some domain-specific KPIs may require custom business configuration.
-* Advanced Power BI time intelligence requires an appropriate date-table model.
-* Grouped SQL validation is limited where scalar comparison is not semantically equivalent.
-* The ground-truth benchmark is controlled and does not represent universal production accuracy.
-* Real-world datasets may require dataset-specific business rules.
-
----
-
-## 🗺️ Future Improvements
-
-Potential future improvements include:
-
-* Advanced date-table-aware DAX generation
-* Multi-table relationship detection
-* More domain-specific KPI templates
-* Historical readiness tracking
-* Automated Power BI model generation
-* Deployment-ready hosted dashboard
-* More advanced semantic role detection
-
----
-
-## 👨‍💻 Author
+## Author
 
 **Kartik Malaviya**
 
 BCA Student | Aspiring Data Analyst
 
 Interested in:
-
 * Data Analytics
 * SQL
 * Python
@@ -571,8 +242,7 @@ GitHub: [@kartikmalaviya11](https://github.com/kartikmalaviya11)
 
 ---
 
-## 📄 License
+## License
 
 This project is intended as a personal portfolio and learning project.
-
 See the repository for licensing information before reuse or redistribution.
