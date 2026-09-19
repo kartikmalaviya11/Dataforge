@@ -1,0 +1,8 @@
+
+columns:
+  Revenue:
+    - type: range
+      min: 0
+      name: non_negative_revenue
+      message: "Revenue cannot be negative"
+      severity: HIGH

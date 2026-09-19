@@ -2,26 +2,6 @@
 Phase 4: Data Quality Engine
 
 Deterministic, explainable data-quality checks.
-
-Design principles (see project master prompt, sections 13 / 27 / 38):
-  - Generic checks (missing values, blanks, duplicate rows, duplicate IDs,
-    invalid emails, invalid dates, invalid numeric values) require NO
-    external configuration. They are driven entirely by what Phase 1
-    (ingestion), Phase 2 (profiling), and Phase 3 (semantic type detection)
-    already determined about the dataset.
-  - Configurable checks (allowed categories, numeric ranges, cross-column
-    consistency rules) are strictly opt-in. If the caller does not supply
-    a rule for a given column, that column is skipped entirely -- this
-    module never assumes a business rule that wasn't explicitly given.
-  - This keeps "generic data quality" cleanly separated from "business
-    rules": Phase 5 (rules.py / RuleEngine) will introduce a full
-    YAML-driven rule system for business rules, and can either call the
-    configurable checks here directly or build additional rule types on
-    top of the same QualityIssue schema.
-  - Every issue is a single, explainable record: which row, which column,
-    what check flagged it, what the actual value was, and what was
-    expected. Severity and remediation recommendations are intentionally
-    NOT assigned here -- that is Phase 6's (Issue Manager's) job.
 """
 
 from dataclasses import dataclass
@@ -47,6 +27,9 @@ ISSUE_INVALID_NUMERIC = "INVALID_NUMERIC"
 ISSUE_INVALID_CATEGORY = "INVALID_CATEGORY"
 ISSUE_OUT_OF_RANGE = "OUT_OF_RANGE"
 ISSUE_CONSISTENCY_VIOLATION = "CONSISTENCY_VIOLATION"
+ISSUE_POTENTIAL_DUPLICATE = "POTENTIAL_DUPLICATE"
+ISSUE_WHITESPACE = "WHITESPACE"
+ISSUE_INCONSISTENT_CASE = "INCONSISTENT_CASE"
 
 # Semantic types (from Phase 3) that check_invalid_numeric applies to.
 _NUMERIC_SEMANTIC_TYPES = {"Integer", "Decimal", "Currency", "Percentage"}
@@ -74,13 +57,6 @@ _CONSISTENCY_OPERATORS = {
 
 @dataclass
 class QualityIssue:
-    """
-    A single, explainable data-quality issue.
-
-    Fields are intentionally minimal and generic so this schema can be
-    reused by Phase 5 (business rules) and consumed by Phase 6 (issue
-    management, which adds severity) and Phase 13 (Power BI-ready export).
-    """
     row_index: Optional[Any]        # pandas index label of the affected row
     column: Optional[str]           # affected column (None for whole-row issues)
     issue_type: str                 # one of the ISSUE_* constants above
@@ -109,8 +85,6 @@ def _to_native(value: Any) -> Any:
 
 
 def _is_parseable_numeric(value: Any) -> bool:
-    """Check whether a single value can be interpreted as a number, tolerating
-    common currency/percentage formatting ($1,234.56, 45%, etc.)."""
     if isinstance(value, (int, float, np.integer, np.floating)):
         return not (isinstance(value, float) and np.isnan(value))
     text = str(value).strip()
@@ -126,16 +100,32 @@ def _is_parseable_numeric(value: Any) -> bool:
         return False
 
 
+def _get_missing_mask(series: pd.Series, custom_missing_markers: Optional[set[str]] = None) -> pd.Series:
+    """Returns a boolean mask of values that are conceptually missing."""
+    mask = series.isna()
+    # Check for empty strings or whitespace-only strings
+    if series.dtype == object or pd.api.types.is_string_dtype(series):
+        str_s = series.astype(str).str.strip()
+        mask = mask | (str_s == "")
+        if custom_missing_markers:
+            lower_s = str_s.str.lower()
+            lower_markers = {m.lower() for m in custom_missing_markers}
+            mask = mask | lower_s.isin(lower_markers)
+    return mask
+
 # ─── Individual Checks ──────────────────────────────────────────────
 
-def check_missing_values(df: pd.DataFrame, column_profiles: list) -> list[QualityIssue]:
-    """Flag every null cell. Generic -- no configuration required."""
+def check_missing_values(
+    df: pd.DataFrame, 
+    column_profiles: list, 
+    custom_missing_markers: Optional[set[str]] = None
+) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
     for profile in column_profiles:
         col = profile.name
         if col not in df.columns:
             continue
-        mask = df[col].isna()
+        mask = _get_missing_mask(df[col], custom_missing_markers)
         if not mask.any():
             continue
         for idx in df.index[mask]:
@@ -151,38 +141,74 @@ def check_missing_values(df: pd.DataFrame, column_profiles: list) -> list[Qualit
     return issues
 
 
-def check_blank_values(df: pd.DataFrame, column_profiles: list) -> list[QualityIssue]:
-    """Flag non-null but empty/whitespace-only text values. Only applies to
-    string-like columns; generic -- no configuration required."""
+def check_whitespace_issues(df: pd.DataFrame, column_profiles: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
+    """Flag non-null string values containing leading or trailing whitespace."""
     issues: list[QualityIssue] = []
     for profile in column_profiles:
         col = profile.name
         if col not in df.columns or not is_string_type(profile.storage_type):
             continue
         series = df[col]
-        non_null_mask = series.notna()
-        if not non_null_mask.any():
-            continue
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        # Identify rows that are not missing, but have leading/trailing whitespace
         str_series = series.astype(str)
-        blank_mask = non_null_mask & (str_series.str.strip() == "")
-        if not blank_mask.any():
+        ws_mask = ~missing_mask & str_series.str.contains(r"^\s+|\s+$", regex=True)
+        if not ws_mask.any():
             continue
-        for idx in df.index[blank_mask]:
+        for idx in df.index[ws_mask]:
             issues.append(QualityIssue(
                 row_index=_to_native(idx),
                 column=col,
-                issue_type=ISSUE_BLANK_VALUE,
-                check_name="blank_value_check",
+                issue_type=ISSUE_WHITESPACE,
+                check_name="whitespace_check",
                 actual_value=_to_native(series.loc[idx]),
-                expected_condition="Non-blank text value expected",
-                description=f"Column '{col}' contains a blank or whitespace-only value.",
+                expected_condition="No leading/trailing whitespace",
+                description=f"Value contains leading/trailing whitespace.",
             ))
     return issues
 
 
+def check_case_inconsistencies(df: pd.DataFrame, column_profiles: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
+    """Flag values that share the same case-insensitive string but have different raw casing variants."""
+    issues: list[QualityIssue] = []
+    for profile in column_profiles:
+        col = profile.name
+        if col not in df.columns or not is_string_type(profile.storage_type):
+            continue
+        series = df[col]
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        valid_series = series[~missing_mask].astype(str)
+        if valid_series.empty:
+            continue
+        
+        # Group by normalized lowercase value
+        normalized = valid_series.str.strip().str.lower()
+        grouped = valid_series.groupby(normalized)
+        
+        for norm_val, group in grouped:
+            unique_raw_values = group.unique()
+            if len(unique_raw_values) > 1:
+                # We have inconsistencies
+                for idx in group.index:
+                    issues.append(QualityIssue(
+                        row_index=_to_native(idx),
+                        column=col,
+                        issue_type=ISSUE_INCONSISTENT_CASE,
+                        check_name="case_inconsistency_check",
+                        actual_value=_to_native(series.loc[idx]),
+                        expected_condition="Consistent casing across dataset",
+                        description=f"Value has inconsistent casing variations in the dataset: {list(unique_raw_values)}",
+                    ))
+    return issues
+
+
+def check_blank_values(df: pd.DataFrame, column_profiles: list) -> list[QualityIssue]:
+    # Deprecated/Removed in favor of whitespace check and robust missing values,
+    # but we will return an empty list to avoid breaking anything that strictly imports it.
+    return []
+
+
 def check_duplicate_rows(df: pd.DataFrame) -> list[QualityIssue]:
-    """Flag rows that are exact duplicates of an earlier row (keeps the first
-    occurrence clean, flags the later copies). Generic -- no configuration."""
     issues: list[QualityIssue] = []
     if df.empty:
         return issues
@@ -202,21 +228,86 @@ def check_duplicate_rows(df: pd.DataFrame) -> list[QualityIssue]:
     return issues
 
 
+def check_potential_duplicates(
+    df: pd.DataFrame,
+    type_results: list,
+    id_columns: Optional[list[str]] = None,
+    custom_missing_markers: Optional[set[str]] = None
+) -> list[QualityIssue]:
+    """Flag rows that match on strong identifiers (Email/Phone) or match on all non-ID columns."""
+    issues: list[QualityIssue] = []
+    if df.empty:
+        return issues
+        
+    detected_id_cols = {tr.column_name for tr in type_results if tr.detected_type == "ID"}
+    candidate_id_cols = set(id_columns or []) | detected_id_cols
+    candidate_id_cols = {c for c in candidate_id_cols if c in df.columns}
+    
+    non_id_cols = [c for c in df.columns if c not in candidate_id_cols]
+    
+    email_cols = [tr.column_name for tr in type_results if tr.detected_type == "Email" and tr.column_name in df.columns]
+    phone_cols = [tr.column_name for tr in type_results if tr.detected_type == "Phone" and tr.column_name in df.columns]
+    # In case Semantic type misses, fallback to names
+    for c in df.columns:
+        c_lower = str(c).lower()
+        if "email" in c_lower and c not in email_cols:
+            email_cols.append(c)
+        if "phone" in c_lower and c not in phone_cols:
+            phone_cols.append(c)
+
+    # Normalize dataframe for comparison
+    norm_df = df.copy()
+    for col in norm_df.columns:
+        missing_mask = _get_missing_mask(norm_df[col], custom_missing_markers)
+        if norm_df[col].dtype == object or pd.api.types.is_string_dtype(norm_df[col]):
+            norm_df.loc[~missing_mask, col] = norm_df.loc[~missing_mask, col].astype(str).str.strip().str.lower()
+        norm_df.loc[missing_mask, col] = np.nan
+        
+    potential_indices = set()
+    
+    # 1. Match by Email
+    for c in email_cols:
+        non_null = norm_df[c].notna()
+        dups = norm_df[non_null].duplicated(subset=[c], keep=False)
+        potential_indices.update(dups[dups].index)
+        
+    # 2. Match by Phone
+    for c in phone_cols:
+        non_null = norm_df[c].notna()
+        dups = norm_df[non_null].duplicated(subset=[c], keep=False)
+        potential_indices.update(dups[dups].index)
+        
+    # 3. Match by all non-ID columns
+    if non_id_cols:
+        dups = norm_df.duplicated(subset=non_id_cols, keep=False)
+        potential_indices.update(dups[dups].index)
+        
+    # Remove exact duplicates from potential
+    exact_dups_mask = df.duplicated(keep=False)
+    exact_dup_indices = set(df.index[exact_dups_mask])
+    
+    potential_indices = potential_indices - exact_dup_indices
+    
+    for idx in sorted(list(potential_indices)):
+        issues.append(QualityIssue(
+            row_index=_to_native(idx),
+            column=None,
+            issue_type=ISSUE_POTENTIAL_DUPLICATE,
+            check_name="potential_duplicate_check",
+            actual_value=None,
+            expected_condition="Entities should be distinct or normalized",
+            description="This row is a potential normalized duplicate of another record.",
+        ))
+        
+    return issues
+
+
 def check_duplicate_ids(
     df: pd.DataFrame,
     type_results: list,
     id_columns: Optional[list[str]] = None,
+    custom_missing_markers: Optional[set[str]] = None
 ) -> list[QualityIssue]:
-    """
-    Flag rows whose value in an ID-like column is shared by another row.
-
-    ID columns are identified automatically from Phase 3's semantic type
-    detection (detected_type == "ID"), plus any explicit override supplied
-    via `id_columns`. Unlike duplicate-row detection, ALL rows sharing a
-    duplicate ID are flagged (not just the later copies) -- for a primary
-    key, there is no way to tell which copy is "the real one," so the
-    analyst needs to see every row involved.
-    """
     issues: list[QualityIssue] = []
     detected_id_cols = {tr.column_name for tr in type_results if tr.detected_type == "ID"}
     candidate_cols = set(id_columns or []) | detected_id_cols
@@ -225,7 +316,8 @@ def check_duplicate_ids(
         if col not in df.columns:
             continue
         series = df[col]
-        non_null_mask = series.notna()
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        non_null_mask = ~missing_mask
         if not non_null_mask.any():
             continue
         dup_mask = non_null_mask & series.duplicated(keep=False)
@@ -244,9 +336,7 @@ def check_duplicate_ids(
     return issues
 
 
-def check_invalid_emails(df: pd.DataFrame, type_results: list) -> list[QualityIssue]:
-    """Flag values that don't match a valid email pattern, in columns Phase 3
-    detected as semantically Email. Generic -- no configuration required."""
+def check_invalid_emails(df: pd.DataFrame, type_results: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
     email_cols = [tr.column_name for tr in type_results if tr.detected_type == "Email"]
 
@@ -254,7 +344,8 @@ def check_invalid_emails(df: pd.DataFrame, type_results: list) -> list[QualityIs
         if col not in df.columns:
             continue
         series = df[col]
-        non_null_series = series.dropna()
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        non_null_series = series[~missing_mask]
         if non_null_series.empty:
             continue
         str_series = non_null_series.astype(str).str.strip()
@@ -273,14 +364,7 @@ def check_invalid_emails(df: pd.DataFrame, type_results: list) -> list[QualityIs
     return issues
 
 
-def check_invalid_dates(df: pd.DataFrame, type_results: list) -> list[QualityIssue]:
-    """Flag values that can't be parsed as dates, in columns Phase 3 detected
-    as semantically Date/DateTime. Generic -- no configuration required.
-
-    Columns already stored as a proper datetime64 dtype are skipped: if
-    ingestion/pandas already parsed every value successfully, there is
-    nothing left to flag at the individual-value level.
-    """
+def check_invalid_dates(df: pd.DataFrame, type_results: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
     date_cols = [tr.column_name for tr in type_results if tr.detected_type in _DATE_SEMANTIC_TYPES]
 
@@ -290,7 +374,8 @@ def check_invalid_dates(df: pd.DataFrame, type_results: list) -> list[QualityIss
         series = df[col]
         if pd.api.types.is_datetime64_any_dtype(series):
             continue
-        non_null_mask = series.notna()
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        non_null_mask = ~missing_mask
         if not non_null_mask.any():
             continue
         parsed = pd.to_datetime(series, errors="coerce")
@@ -308,15 +393,7 @@ def check_invalid_dates(df: pd.DataFrame, type_results: list) -> list[QualityIss
     return issues
 
 
-def check_invalid_numeric(df: pd.DataFrame, type_results: list) -> list[QualityIssue]:
-    """Flag values that can't be interpreted as numeric, in columns Phase 3
-    detected as semantically Integer/Decimal/Currency/Percentage. Tolerates
-    common currency/percentage formatting. Generic -- no configuration.
-
-    Columns already stored as a numeric dtype are skipped: there is no
-    per-value parse failure possible once pandas has already stored the
-    column as int/float.
-    """
+def check_invalid_numeric(df: pd.DataFrame, type_results: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
     numeric_cols = [tr.column_name for tr in type_results if tr.detected_type in _NUMERIC_SEMANTIC_TYPES]
 
@@ -326,7 +403,8 @@ def check_invalid_numeric(df: pd.DataFrame, type_results: list) -> list[QualityI
         series = df[col]
         if pd.api.types.is_numeric_dtype(series):
             continue
-        non_null_mask = series.notna()
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        non_null_mask = ~missing_mask
         if not non_null_mask.any():
             continue
         valid_mask = series.apply(_is_parseable_numeric)
@@ -347,16 +425,8 @@ def check_invalid_numeric(df: pd.DataFrame, type_results: list) -> list[QualityI
 def check_invalid_categories(
     df: pd.DataFrame,
     allowed_categories: Optional[dict[str, set]] = None,
+    custom_missing_markers: Optional[set[str]] = None
 ) -> list[QualityIssue]:
-    """
-    Flag values not in an explicitly configured allowed set for a column.
-
-    Strictly opt-in: if `allowed_categories` is not supplied, or a column
-    isn't a key in it, that column is skipped entirely. This module never
-    guesses what a "valid" category is for a dataset it hasn't been told
-    about -- that would violate "do not assume every dataset has the same
-    business rules."
-    """
     issues: list[QualityIssue] = []
     if not allowed_categories:
         return issues
@@ -366,7 +436,8 @@ def check_invalid_categories(
             continue
         allowed_set = set(allowed)
         series = df[col]
-        non_null_mask = series.notna()
+        missing_mask = _get_missing_mask(series, custom_missing_markers)
+        non_null_mask = ~missing_mask
         if not non_null_mask.any():
             continue
         invalid_mask = non_null_mask & ~series.isin(allowed_set)
@@ -389,15 +460,8 @@ def check_invalid_categories(
 def check_range_violations(
     df: pd.DataFrame,
     column_ranges: Optional[dict[str, tuple[Optional[float], Optional[float]]]] = None,
+    custom_missing_markers: Optional[set[str]] = None
 ) -> list[QualityIssue]:
-    """
-    Flag numeric values outside a configured [min, max] range (inclusive).
-
-    Strictly opt-in: if `column_ranges` is not supplied, or a column isn't
-    a key in it, that column is skipped entirely -- e.g. a negative Profit
-    value is never flagged unless the caller explicitly configured a range
-    for the Profit column.
-    """
     issues: list[QualityIssue] = []
     if not column_ranges:
         return issues
@@ -408,7 +472,8 @@ def check_range_violations(
         min_val, max_val = bounds
         raw = df[col]
         numeric = pd.to_numeric(raw, errors="coerce")
-        comparable_mask = raw.notna() & numeric.notna()
+        missing_mask = _get_missing_mask(raw, custom_missing_markers)
+        comparable_mask = ~missing_mask & numeric.notna()
         if not comparable_mask.any():
             continue
 
@@ -446,21 +511,8 @@ def check_consistency(
     df: pd.DataFrame,
     type_results: list,
     consistency_rules: Optional[list[dict]] = None,
+    custom_missing_markers: Optional[set[str]] = None
 ) -> list[QualityIssue]:
-    """
-    Flag rows that violate a configured cross-column relationship, e.g.
-    Order_Date <= Delivery_Date.
-
-    Strictly opt-in: if `consistency_rules` is not supplied, nothing is
-    checked. Each rule is a dict:
-        {"name": str, "column_a": str, "column_b": str, "operator": str}
-    where operator is one of "<=", "<", ">=", ">", "==", "!=", meaning
-    `column_a <operator> column_b` is expected to hold.
-
-    Comparison mode (datetime vs numeric) is chosen using Phase 3's
-    semantic type detection for the two columns, so this reuses existing
-    type information rather than re-guessing.
-    """
     issues: list[QualityIssue] = []
     if not consistency_rules:
         return issues
@@ -491,7 +543,9 @@ def check_consistency(
             cmp_a = pd.to_numeric(series_a, errors="coerce")
             cmp_b = pd.to_numeric(series_b, errors="coerce")
 
-        comparable_mask = cmp_a.notna() & cmp_b.notna()
+        missing_a = _get_missing_mask(series_a, custom_missing_markers)
+        missing_b = _get_missing_mask(series_b, custom_missing_markers)
+        comparable_mask = ~missing_a & ~missing_b & cmp_a.notna() & cmp_b.notna()
         if not comparable_mask.any():
             continue
 
@@ -523,35 +577,23 @@ def run_quality_checks(
     allowed_categories: Optional[dict[str, set]] = None,
     column_ranges: Optional[dict[str, tuple[Optional[float], Optional[float]]]] = None,
     consistency_rules: Optional[list[dict]] = None,
+    custom_missing_markers: Optional[set[str]] = None
 ) -> list[QualityIssue]:
-    """
-    Run all Phase 4 data-quality checks and return a combined, flat list of
-    QualityIssue records.
-
-    Generic checks (missing, blank, duplicate rows, duplicate IDs, invalid
-    email/date/numeric) always run and require no configuration. The
-    configurable checks (categories, ranges, consistency) only produce
-    issues when the corresponding parameter is supplied -- omit them and
-    those checks are simply skipped, not treated as "no issues found."
-
-    This function's signature is backward compatible with a 3-argument
-    call (df, column_profiles, type_results); the optional parameters
-    exist so Phase 5's business-rule engine can pass configuration
-    straight through without needing a different entry point.
-    """
     logger.info("Running Phase 4 data quality checks...")
     issues: list[QualityIssue] = []
 
-    issues += check_missing_values(df, column_profiles)
-    issues += check_blank_values(df, column_profiles)
+    issues += check_missing_values(df, column_profiles, custom_missing_markers=custom_missing_markers)
+    issues += check_whitespace_issues(df, column_profiles, custom_missing_markers=custom_missing_markers)
+    issues += check_case_inconsistencies(df, column_profiles, custom_missing_markers=custom_missing_markers)
     issues += check_duplicate_rows(df)
-    issues += check_duplicate_ids(df, type_results, id_columns=id_columns)
-    issues += check_invalid_emails(df, type_results)
-    issues += check_invalid_dates(df, type_results)
-    issues += check_invalid_numeric(df, type_results)
-    issues += check_invalid_categories(df, allowed_categories=allowed_categories)
-    issues += check_range_violations(df, column_ranges=column_ranges)
-    issues += check_consistency(df, type_results, consistency_rules=consistency_rules)
+    issues += check_potential_duplicates(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)
+    issues += check_duplicate_ids(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)
+    issues += check_invalid_emails(df, type_results, custom_missing_markers=custom_missing_markers)
+    issues += check_invalid_dates(df, type_results, custom_missing_markers=custom_missing_markers)
+    issues += check_invalid_numeric(df, type_results, custom_missing_markers=custom_missing_markers)
+    issues += check_invalid_categories(df, allowed_categories=allowed_categories, custom_missing_markers=custom_missing_markers)
+    issues += check_range_violations(df, column_ranges=column_ranges, custom_missing_markers=custom_missing_markers)
+    issues += check_consistency(df, type_results, consistency_rules=consistency_rules, custom_missing_markers=custom_missing_markers)
 
     logger.info(f"Data quality checks complete: {len(issues)} issue(s) found")
     return issues

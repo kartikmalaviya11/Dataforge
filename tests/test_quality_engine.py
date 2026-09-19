@@ -10,7 +10,7 @@ from src.quality_engine import (
     QualityIssue,
     run_quality_checks,
     check_missing_values,
-    check_blank_values,
+    check_whitespace_issues,
     check_duplicate_rows,
     check_duplicate_ids,
     check_invalid_emails,
@@ -20,7 +20,7 @@ from src.quality_engine import (
     check_range_violations,
     check_consistency,
     ISSUE_MISSING_VALUE,
-    ISSUE_BLANK_VALUE,
+    ISSUE_WHITESPACE,
     ISSUE_DUPLICATE_ROW,
     ISSUE_DUPLICATE_ID,
     ISSUE_INVALID_EMAIL,
@@ -72,31 +72,6 @@ class TestMissingValues:
 
 
 # ─── Blank Values ────────────────────────────────────────────────────
-
-class TestBlankValues:
-    def test_flags_empty_and_whitespace_strings(self):
-        df = pd.DataFrame({"name": ["Alice", "", "   ", "Bob", None]})
-        profiles = profile_dataset(df)
-        issues = check_blank_values(df, profiles)
-        # "" and "   " are blank; None is missing (handled by a different check)
-        assert len(issues) == 2
-        assert {i.row_index for i in issues} == {1, 2}
-        assert all(i.issue_type == ISSUE_BLANK_VALUE for i in issues)
-
-    def test_does_not_flag_numeric_columns(self):
-        df = pd.DataFrame({"amount": [0, 1, 2]})
-        profiles = profile_dataset(df)
-        issues = check_blank_values(df, profiles)
-        assert issues == []
-
-    def test_no_blanks(self):
-        df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"]})
-        profiles = profile_dataset(df)
-        issues = check_blank_values(df, profiles)
-        assert issues == []
-
-
-# ─── Duplicate Rows ──────────────────────────────────────────────────
 
 class TestDuplicateRows:
     def test_flags_later_copies_only(self):

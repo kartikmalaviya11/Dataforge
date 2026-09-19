@@ -38,7 +38,7 @@ def test_remaining_issues_scenario(reval_engine, repair_engine):
     # Test B: Some issues repaired, others remain
     df = pd.DataFrame({
         "col1": ["A", "A", "C"],
-        "col2": ["B", "B", "  "] # has BLANK_VALUE
+        "col2": ["B", "B", "  "] # has MISSING_VALUE
     })
     
     before = reval_engine.run_validation(df)
@@ -71,7 +71,7 @@ def test_new_issues_scenario(reval_engine, repair_engine):
     # How to trigger a new issue naturally?
     # If we have a rule that requires >1 rows, and we drop a duplicate? No rules by default.
     # What if "col" has "1" and "  "? So it's detected as String.
-    # If we trim whitespace on "  ", it becomes "", still a String, still BLANK_VALUE.
+    # If we trim whitespace on "  ", it becomes "", still a String, still MISSING_VALUE.
     # Let's mock the compare to just test if it detects new issues correctly, or force it.
     # If we mock `run_validation` for `after` to have a brand new issue:
     pass
@@ -122,7 +122,7 @@ def test_multiple_issue_types(reval_engine, repair_engine):
     # Test G
     df = pd.DataFrame({
         "col1": ["A", "A", "A"],
-        "col2": ["B", "B", "  "] # DUPLICATE_ROW and BLANK_VALUE
+        "col2": ["B", "B", "  "] # DUPLICATE_ROW and MISSING_VALUE
     })
     before = reval_engine.run_validation(df)
     
@@ -136,7 +136,7 @@ def test_multiple_issue_types(reval_engine, repair_engine):
 
 def test_stable_issue_matching(reval_engine, repair_engine):
     # Test H: Does not depend solely on row order.
-    # df has identical duplicate row at index 0 and 1, and a blank value at index 2.
+    # df has identical duplicate row at index 0 and 1, and a missing value at index 2.
     df = pd.DataFrame({"col": ["A", "A", "  "]})
     before = reval_engine.run_validation(df)
     
@@ -151,11 +151,11 @@ def test_stable_issue_matching(reval_engine, repair_engine):
     comp = reval_engine.compare(before, after)
     
     # The duplicate issue is resolved. 
-    # The BLANK_VALUE issue for '  ' should remain, even if its row_index changed from 2 to 1.
+    # The MISSING_VALUE issue for '  ' should remain, even if its row_index changed from 2 to 1.
     assert comp.resolved_issue_count == 1 # DUPLICATE_ROW
     assert comp.new_issue_count == 0
-    assert comp.remaining_issue_count == 1 # BLANK_VALUE
-    assert comp.remaining_issues[0].issue_type == "BLANK_VALUE"
+    assert comp.remaining_issue_count == 1 # MISSING_VALUE
+    assert comp.remaining_issues[0].issue_type == "MISSING_VALUE"
 
 def test_streamlit_state_integration():
     # Test I

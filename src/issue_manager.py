@@ -39,7 +39,7 @@ def _classify_issue(source: str, issue_type: str, column: Optional[str] = None) 
     Deterministic classification of data quality and business rule issues.
     """
     # 1. AUTO_FIXABLE
-    if issue_type in ("BLANK_VALUE", "DUPLICATE_ROW"):
+    if issue_type in ("BLANK_VALUE", "WHITESPACE", "DUPLICATE_ROW"):
         return IssueClassification.AUTO_FIXABLE
 
     # 3. REVIEW_REQUIRED
@@ -62,7 +62,7 @@ def _classify_issue(source: str, issue_type: str, column: Optional[str] = None) 
         return IssueClassification.REVIEW_REQUIRED
 
     # 3. REVIEW_REQUIRED
-    if issue_type in ("INVALID_CATEGORY", "OUT_OF_RANGE", "CONSISTENCY_VIOLATION"):
+    if issue_type in ("INVALID_CATEGORY", "OUT_OF_RANGE", "CONSISTENCY_VIOLATION", "INCONSISTENT_CASE", "POTENTIAL_DUPLICATE"):
         return IssueClassification.REVIEW_REQUIRED
 
     if source == "business_rule":
@@ -84,7 +84,10 @@ _QUALITY_SEVERITY_MAP = {
     "INVALID_NUMERIC": "HIGH",
     "INVALID_CATEGORY": "MEDIUM",
     "OUT_OF_RANGE": "HIGH",
-    "CONSISTENCY_VIOLATION": "HIGH"
+    "CONSISTENCY_VIOLATION": "HIGH",
+    "WHITESPACE": "LOW",
+    "POTENTIAL_DUPLICATE": "MEDIUM",
+    "INCONSISTENT_CASE": "MEDIUM"
 }
 
 _QUALITY_RECOMMENDATION_MAP = {
@@ -97,7 +100,10 @@ _QUALITY_RECOMMENDATION_MAP = {
     "INVALID_NUMERIC": "Remove non-numeric characters or correct data type.",
     "INVALID_CATEGORY": "Map to an allowed category or expand allowed list.",
     "OUT_OF_RANGE": "Verify value against domain bounds.",
-    "CONSISTENCY_VIOLATION": "Investigate contradictory data across columns."
+    "CONSISTENCY_VIOLATION": "Investigate contradictory data across columns.",
+    "WHITESPACE": "Remove leading or trailing whitespace.",
+    "POTENTIAL_DUPLICATE": "Review potential duplicate entity and merge/deduplicate if needed.",
+    "INCONSISTENT_CASE": "Normalize text case to the most frequent variant or a configured standard."
 }
 
 def _generate_issue_id(source: str, issue_type: str, rule_name: str, row_index: Any, column: Optional[str]) -> str:

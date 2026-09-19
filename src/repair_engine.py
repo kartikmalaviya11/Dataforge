@@ -46,6 +46,7 @@ class RepairEngine:
     def __init__(self):
         self._operations = {
             "trim_whitespace": self._trim_whitespace,
+            "normalize_case": self._normalize_case,
             "remove_exact_duplicates": self._remove_exact_duplicates,
             "convert_obvious_numeric": self._convert_obvious_numeric,
             "normalize_obvious_date": self._normalize_obvious_date,
@@ -139,6 +140,39 @@ class RepairEngine:
                     affected_rows += 1
 
         return df, RepairResult(True, affected_rows, changes, [])
+
+    
+    def _normalize_case(self, df: pd.DataFrame, instruction: RepairInstruction) -> Tuple[pd.DataFrame, RepairResult]:
+        if not instruction.column:
+            raise RepairError("Target column missing from instruction.")
+        if instruction.column not in df.columns:
+            raise RepairError(f"Target column '{instruction.column}' not found.")
+        
+        col = instruction.column
+        changes = []
+        affected_rows = 0
+        
+        target_indices = [instruction.row_index] if instruction.row_index is not None else []
+        for idx in target_indices:
+            if idx in df.index:
+                old_val = df.at[idx, col]
+                new_val = instruction.proposed_value
+                if old_val != new_val:
+                    df.at[idx, col] = new_val
+                    changes.append({
+                        "row": idx,
+                        "column": col,
+                        "old_value": old_val,
+                        "new_value": new_val,
+                        "action": "normalize_case"
+                    })
+                    affected_rows += 1
+                    
+        return df, RepairResult(
+            success=True,
+            affected_rows=affected_rows,
+            change_records=changes
+        )
 
     def _remove_exact_duplicates(self, df: pd.DataFrame, instruction: RepairInstruction) -> Tuple[pd.DataFrame, RepairResult]:
         duplicates = df.duplicated(keep='first')

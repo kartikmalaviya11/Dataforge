@@ -79,7 +79,7 @@ class ProposalGenerator:
         return proposals
 
     def _generate_single_proposal(self, df: pd.DataFrame, issue: StandardizedIssue) -> Optional[RepairProposal]:
-        if issue.issue_type == "BLANK_VALUE":
+        if issue.issue_type == "WHITESPACE":
             if issue.column and issue.row_index is not None and issue.column in df.columns:
                 old_val = issue.actual_value
                 if isinstance(old_val, str):
@@ -94,6 +94,25 @@ class ProposalGenerator:
                             proposed_value=new_val,
                             action="trim_whitespace",
                             reason="Remove leading/trailing whitespace",
+                            classification=issue.classification
+                        )
+                        
+        elif issue.issue_type == "INCONSISTENT_CASE":
+            if issue.column and issue.row_index is not None and issue.column in df.columns:
+                old_val = issue.actual_value
+                if isinstance(old_val, str):
+                    # Deterministic normalization strategy: Title Case for names/cities.
+                    new_val = old_val.strip().title()
+                    if old_val != new_val:
+                        return RepairProposal(
+                            proposal_id=self._next_id(),
+                            issue_id=issue.issue_id,
+                            row_index=issue.row_index,
+                            column=issue.column,
+                            old_value=old_val,
+                            proposed_value=new_val,
+                            action="normalize_case",
+                            reason="Normalize casing to Title Case",
                             classification=issue.classification
                         )
                         

@@ -21,7 +21,7 @@ def test_generating_proposals_does_not_mutate_dataframe(proposal_generator):
     issue = StandardizedIssue(
         issue_id="i1",
         source="quality",
-        issue_type="BLANK_VALUE",
+        issue_type="WHITESPACE",
         rule_or_check_name="check",
         row_index=0,
         column="col",
@@ -41,7 +41,7 @@ def test_auto_fixable_can_be_approved(proposal_generator, repair_engine):
     # Test B
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )
@@ -61,7 +61,7 @@ def test_auto_fixable_rejected_remains_unapplied(proposal_generator, repair_engi
     # Test C
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )
@@ -84,7 +84,7 @@ def test_review_required_cannot_execute_unless_approved(proposal_generator, repa
     # Test D
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.REVIEW_REQUIRED
     )
@@ -102,7 +102,7 @@ def test_unsafe_to_fix_cannot_execute(proposal_generator):
     # Test E: UNSAFE_TO_FIX doesn't even generate a proposal
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.UNSAFE_TO_FIX
     )
@@ -114,12 +114,12 @@ def test_multiple_proposals_can_be_individually_approved(proposal_generator, rep
     # Test F
     df = pd.DataFrame({"c1": [" a "], "c2": [" b "]})
     i1 = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="c1", actual_value=" a ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )
     i2 = StandardizedIssue(
-        issue_id="i2", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i2", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="c2", actual_value=" b ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )
@@ -141,7 +141,7 @@ def test_bulk_approval_does_not_bypass_safety(proposal_generator, repair_engine)
     # Test G
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.UNSAFE_TO_FIX
     )
@@ -159,7 +159,7 @@ def test_approved_proposals_translate_correctly(proposal_generator):
     # Test H
     df = pd.DataFrame({"col": ["  val  "]})
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )
@@ -188,7 +188,7 @@ def test_preview_flow_no_mutation(proposal_generator):
     df = pd.DataFrame({"col": ["  val  "]})
     df_orig = df.copy()
     issue = StandardizedIssue(
-        issue_id="i1", source="q", issue_type="BLANK_VALUE", rule_or_check_name="c",
+        issue_id="i1", source="q", issue_type="WHITESPACE", rule_or_check_name="c",
         row_index=0, column="col", actual_value="  val  ", expected_condition="",
         severity="L", message="", recommendation="", classification=IssueClassification.AUTO_FIXABLE
     )

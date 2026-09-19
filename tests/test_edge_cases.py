@@ -135,10 +135,12 @@ def test_boolean_like_mixed():
 
 # --- 16-20: Text & Encodings ---
 def test_empty_and_whitespace_strings():
-    df = pd.DataFrame({"text": ["", "   ", "\t", "normal"]})
+    df = pd.DataFrame({"text": ["", "   ", "\t", " normal "]})
     issues, score = run_full_pipeline(df)
-    blanks = [i for i in issues if i.issue_type == "BLANK_VALUE"]
-    assert len(blanks) == 3
+    missing = [i for i in issues if i.issue_type == "MISSING_VALUE"]
+    ws = [i for i in issues if i.issue_type == "WHITESPACE"]
+    assert len(missing) == 3
+    assert len(ws) == 1
 
 def test_unicode_and_special_chars():
     df = pd.DataFrame({"text": ["hello", "こんにちは", "😊", "a!@#$%^&*()_+"]})
