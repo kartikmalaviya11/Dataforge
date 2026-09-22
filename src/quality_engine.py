@@ -169,7 +169,9 @@ def check_whitespace_issues(df: pd.DataFrame, column_profiles: list, custom_miss
 
 
 def check_case_inconsistencies(df: pd.DataFrame, column_profiles: list, custom_missing_markers: Optional[set[str]] = None) -> list[QualityIssue]:
-    """Flag values that share the same case-insensitive string but have different raw casing variants."""
+    """Flag values that share the same case-insensitive string but have different raw casing variants.
+    Must not flag whitespace-only differences as case inconsistencies.
+    """
     issues: list[QualityIssue] = []
     for profile in column_profiles:
         col = profile.name
@@ -181,24 +183,35 @@ def check_case_inconsistencies(df: pd.DataFrame, column_profiles: list, custom_m
         if valid_series.empty:
             continue
         
-        # Group by normalized lowercase value
-        normalized = valid_series.str.strip().str.lower()
-        grouped = valid_series.groupby(normalized)
+        # Conceptually trim first, then normalize
+        stripped = valid_series.str.strip()
+        normalized = stripped.str.lower()
+        
+        # Group the STRIPPED values by the NORMALIZED values
+        grouped = stripped.groupby(normalized)
         
         for norm_val, group in grouped:
-            unique_raw_values = group.unique()
-            if len(unique_raw_values) > 1:
-                # We have inconsistencies
+            unique_casing_variants = group.unique()
+            if len(unique_casing_variants) > 1:
+                val_counts = group.value_counts()
+                canonical = val_counts.idxmax()
+                
+                # Only flag if there are multiple DIFFERENT casings for the same letters
                 for idx in group.index:
-                    issues.append(QualityIssue(
-                        row_index=_to_native(idx),
-                        column=col,
-                        issue_type=ISSUE_INCONSISTENT_CASE,
-                        check_name="case_inconsistency_check",
-                        actual_value=_to_native(series.loc[idx]),
-                        expected_condition="Consistent casing across dataset",
-                        description=f"Value has inconsistent casing variations in the dataset: {list(unique_raw_values)}",
-                    ))
+                    original_val_str = str(series.loc[idx])
+                    stripped_val_str = str(group.loc[idx])
+                    
+                    if stripped_val_str != canonical:
+                        issues.append(QualityIssue(
+                            row_index=_to_native(idx),
+                            column=col,
+                            issue_type=ISSUE_INCONSISTENT_CASE,
+                            check_name="case_inconsistency_check",
+                            actual_value=_to_native(original_val_str),
+                            expected_condition="Consistent casing across dataset",
+                            description=f"Value '{stripped_val_str}' has inconsistent casing variations in the dataset (canonical is '{canonical}').",
+                        ))
+
     return issues
 
 

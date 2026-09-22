@@ -159,19 +159,22 @@ class RepairEngine:
                 new_val = instruction.proposed_value
                 if old_val != new_val:
                     df.at[idx, col] = new_val
-                    changes.append({
-                        "row": idx,
-                        "column": col,
-                        "old_value": old_val,
-                        "new_value": new_val,
-                        "action": "normalize_case"
-                    })
+                    changes.append(ChangeRecord(
+                        row_index=idx,
+                        column=col,
+                        old_value=old_val,
+                        new_value=new_val,
+                        action=instruction.action,
+                        reason=instruction.reason,
+                        classification=instruction.classification.value
+                    ))
                     affected_rows += 1
                     
         return df, RepairResult(
             success=True,
             affected_rows=affected_rows,
-            change_records=changes
+            change_records=changes,
+            errors=[]
         )
 
     def _remove_exact_duplicates(self, df: pd.DataFrame, instruction: RepairInstruction) -> Tuple[pd.DataFrame, RepairResult]:

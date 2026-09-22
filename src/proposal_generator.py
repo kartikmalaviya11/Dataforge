@@ -101,18 +101,26 @@ class ProposalGenerator:
             if issue.column and issue.row_index is not None and issue.column in df.columns:
                 old_val = issue.actual_value
                 if isinstance(old_val, str):
-                    # Deterministic normalization strategy: Title Case for names/cities.
-                    new_val = old_val.strip().title()
-                    if old_val != new_val:
+                    normalized = old_val.strip().lower()
+                    series = df[issue.column].dropna().astype(str)
+                    stripped_series = series.str.strip()
+                    matching = stripped_series[stripped_series.str.lower() == normalized]
+                    
+                    if not matching.empty:
+                        canonical_val = matching.mode().iloc[0]
+                    else:
+                        canonical_val = old_val.strip()
+                    
+                    if old_val != canonical_val:
                         return RepairProposal(
                             proposal_id=self._next_id(),
                             issue_id=issue.issue_id,
                             row_index=issue.row_index,
                             column=issue.column,
                             old_value=old_val,
-                            proposed_value=new_val,
+                            proposed_value=canonical_val,
                             action="normalize_case",
-                            reason="Normalize casing to Title Case",
+                            reason=f"Normalize casing to most frequent variant '{canonical_val}'",
                             classification=issue.classification
                         )
                         

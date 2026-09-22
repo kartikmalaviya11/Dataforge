@@ -25,6 +25,17 @@ from src.report_generator import ReportGenerator
 from src.sql_analyzer import SQLAnalyzer
 from src.export_service import ExportService
 
+from src.workspace import ProjectWorkspace, TableStatus
+
+class LocalFileMock:
+    def __init__(self, file_path):
+        self.path = Path(file_path)
+        self.name = self.path.name
+        self.size = self.path.stat().st_size
+    def getvalue(self):
+        return self.path.read_bytes()
+
+
 # --- Page Config & Styling ---
 st.set_page_config(page_title="DATAFORGE — Analytics Readiness", page_icon="♦", layout="wide", initial_sidebar_state="expanded")
 
@@ -283,17 +294,57 @@ with st.sidebar:
     </div>
     ''', unsafe_allow_html=True)
     
-    st.markdown("<h4 style='color: var(--primary-cyan) !important; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;'>DATASET</h4>", unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload Data", type=["csv", "xlsx"], label_visibility="collapsed")
+    workflow_mode = st.radio("Workflow", ["Single File", "Project Workspace"], horizontal=True)
     
-    if uploaded_file:
-        st.markdown(f'''
-        <div style='background-color: var(--card-bg); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1rem;'>
-            <div style='color: var(--success-green); font-size: 0.8rem; font-weight: bold; margin-bottom: 0.2rem;'>● UPLOADED</div>
-            <div style='color: white; font-size: 0.9rem; word-break: break-all;'>{uploaded_file.name}</div>
-            <div style='color: var(--text-muted); font-size: 0.8rem;'>{uploaded_file.size / 1024:.1f} KB</div>
-        </div>
-        ''', unsafe_allow_html=True)
+    target_file = None
+    
+    if workflow_mode == "Single File":
+        st.markdown("<h4 style='color: var(--primary-cyan) !important; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;'>DATASET</h4>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("Upload Data", type=["csv", "xlsx"], label_visibility="collapsed")
+        target_file = uploaded_file
+        
+        if target_file:
+            st.markdown(f"""
+            <div style='background-color: var(--card-bg); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1rem;'>
+                <div style='color: var(--success-green); font-size: 0.8rem; font-weight: bold; margin-bottom: 0.2rem;'>● UPLOADED</div>
+                <div style='color: white; font-size: 0.9rem; word-break: break-all;'>{target_file.name}</div>
+                <div style='color: var(--text-muted); font-size: 0.8rem;'>{target_file.size / 1024:.1f} KB</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown("<h4 style='color: var(--primary-cyan) !important; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;'>PROJECT FOLDER</h4>", unsafe_allow_html=True)
+        project_path = st.text_input("Project Path", placeholder="e.g., C:/data/my_project")
+        
+        if project_path:
+            pp = Path(project_path).resolve()
+            if not pp.exists():
+                st.error("Directory not found")
+            else:
+                if "workspace" not in st.session_state or str(st.session_state.workspace.project_root) != str(pp):
+                    ws = ProjectWorkspace.load(pp)
+                    if not list(ws.registry.keys()):
+                        ws.discover_datasets()
+                        ws.save()
+                    st.session_state.workspace = ws
+                    
+                ws = st.session_state.workspace
+                if not ws.registry:
+                    st.warning("No CSV or Excel files found in folder.")
+                else:
+                    st.markdown(f"**Found {len(ws.registry)} tables.**")
+                    table_names = list(ws.registry.keys())
+                    selected_table = st.selectbox("Select Table", table_names)
+                    
+                    if selected_table:
+                        entry = ws.registry[selected_table]
+                        st.markdown(f"""
+                        <div style='background-color: var(--card-bg); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1rem;'>
+                            <div style='color: var(--primary-cyan); font-size: 0.8rem; font-weight: bold; margin-bottom: 0.2rem;'>● {entry.status}</div>
+                            <div style='color: white; font-size: 0.9rem; word-break: break-all;'>{entry.file_name}</div>
+                            <div style='color: var(--text-muted); font-size: 0.8rem;'>Rows: {entry.row_count or '?'}, Cols: {entry.column_count or '?'}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        target_file = LocalFileMock(entry.file_path)
     
     st.markdown("<h4 style='color: var(--primary-cyan) !important; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-top: 2rem;'>CONFIGURATION</h4>", unsafe_allow_html=True)
     rules_file = st.selectbox("Rules Protocol", ["config/rules.yaml", "None"])
@@ -303,13 +354,18 @@ with st.sidebar:
     
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Analyze Dataset", type="primary", use_container_width=True):
-            if not uploaded_file: st.error("Please upload a file first.")
+        btn_label = "Analyze Table" if workflow_mode == "Project Workspace" else "Analyze Dataset"
+        if st.button(btn_label, type="primary", use_container_width=True):
+            if not target_file: st.error("Please select a file first.")
             else:
-                with st.spinner("Analyzing dataset..."):
-                    success, err = run_pipeline(uploaded_file, rules_path)
-                    if success: st.success("Analysis Completed")
-                    else: st.error(f"Analysis Failed:\\n{err}")
+                with st.spinner(f"Analyzing {target_file.name}..."):
+                    success, err = run_pipeline(target_file, rules_path)
+                    if success: 
+                        st.success("Analysis Completed")
+                        if workflow_mode == "Project Workspace" and "workspace" in st.session_state:
+                            st.session_state.workspace.mark_analyzed(selected_table)
+                    else: 
+                        st.error(f"Analysis Failed:\\n{err}")
     with c2:
         if st.button("Analyze New", use_container_width=True):
             st.session_state.analysis_results = None
