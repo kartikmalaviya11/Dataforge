@@ -26,6 +26,9 @@ from src.sql_analyzer import SQLAnalyzer
 from src.export_service import ExportService
 
 from src.workspace import ProjectWorkspace, TableStatus
+from src.relationship_engine import RelationshipDetector
+from src.er_generator import ERGenerator
+from src.data_model import DataModel, RelationshipStatus
 
 class LocalFileMock:
     def __init__(self, file_path):
@@ -380,8 +383,79 @@ st.markdown("<h1 class='app-title'>Analytics Readiness & Data Quality Analyzer</
 st.markdown("<div class='app-subtitle'>Turn raw data into trusted insights, KPIs and Power BI-ready outputs.</div>", unsafe_allow_html=True)
 st.markdown("<br/>", unsafe_allow_html=True)
 
+if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
+    st.markdown("### Project Data Model")
+    if st.button("Detect Relationships", type="primary"):
+        with st.spinner("Analyzing relationships across tables..."):
+            ws = st.session_state.workspace
+            tables = {}
+            for tname in ws.registry.keys():
+                df, _ = ws.load_table(tname)
+                tables[tname] = df
+            
+            detector = RelationshipDetector()
+            candidates = detector.detect(tables)
+            st.session_state.relationship_candidates = candidates
+            st.success(f"Detected {len(candidates)} relationships candidates!")
+            
+    if "relationship_candidates" in st.session_state:
+        candidates = st.session_state.relationship_candidates
+        st.markdown("#### Review Relationship Candidates")
+        if not candidates:
+            st.info("No candidates detected.")
+        else:
+            rel_data = []
+            for i, r in enumerate(candidates):
+                rel_data.append({
+                    "Accept": r.status == RelationshipStatus.ACCEPTED.value,
+                    "Source": f"{r.source_table}.{r.source_column}",
+                    "Target": f"{r.target_table}.{r.target_column}",
+                    "Cardinality": r.cardinality,
+                    "Confidence": f"{r.confidence:.1f}%",
+                    "Evidence": " | ".join(r.evidence)
+                })
+            
+            edited_df = st.data_editor(
+                pd.DataFrame(rel_data),
+                column_config={
+                    "Accept": st.column_config.CheckboxColumn(
+                        "Accept", help="Select to approve this relationship", default=False
+                    )
+                },
+                disabled=["Source", "Target", "Cardinality", "Confidence", "Evidence"],
+                hide_index=True,
+                key="rel_editor"
+            )
+            
+            if st.button("Apply Selected Relationships"):
+                accepted = []
+                for i, row in edited_df.iterrows():
+                    c = candidates[i]
+                    if row["Accept"]:
+                        c.status = RelationshipStatus.ACCEPTED.value
+                        accepted.append(c)
+                    else:
+                        c.status = RelationshipStatus.REJECTED.value
+                
+                dm = DataModel(tables=st.session_state.workspace.registry, relationships=accepted)
+                st.session_state.data_model = dm
+                st.rerun()
+                
+    if "data_model" in st.session_state:
+        dm = st.session_state.data_model
+        st.markdown("#### Accepted Relationships & ER Diagram")
+        if not dm.relationships:
+            st.info("No relationships accepted.")
+        else:
+            gen = ERGenerator()
+            dot_str = gen.generate_dot(dm)
+            st.graphviz_chart(dot_str)
+
 if not st.session_state.analysis_results:
-    st.info("Upload a CSV or XLSX file from the sidebar and click 'Analyze Dataset' to begin.")
+    if workflow_mode != "Project Workspace":
+        st.info("Upload a CSV or XLSX file from the sidebar and click 'Analyze Dataset' to begin.")
+    else:
+        st.info("Select a table from the sidebar and click 'Analyze Table' to run data quality checks on it.")
 else:
     res = st.session_state.analysis_results
     
