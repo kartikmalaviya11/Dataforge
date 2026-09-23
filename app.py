@@ -384,72 +384,149 @@ st.markdown("<div class='app-subtitle'>Turn raw data into trusted insights, KPIs
 st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
-    st.markdown("### Project Data Model")
-    if st.button("Detect Relationships", type="primary"):
-        with st.spinner("Analyzing relationships across tables..."):
-            ws = st.session_state.workspace
-            tables = {}
-            for tname in ws.registry.keys():
-                df, _ = ws.load_table(tname)
-                tables[tname] = df
-            
-            detector = RelationshipDetector()
-            candidates = detector.detect(tables)
-            st.session_state.relationship_candidates = candidates
-            st.success(f"Detected {len(candidates)} relationships candidates!")
-            
-    if "relationship_candidates" in st.session_state:
-        candidates = st.session_state.relationship_candidates
-        st.markdown("#### Review Relationship Candidates")
-        if not candidates:
-            st.info("No candidates detected.")
-        else:
-            rel_data = []
-            for i, r in enumerate(candidates):
-                rel_data.append({
-                    "Accept": r.status == RelationshipStatus.ACCEPTED.value,
-                    "Source": f"{r.source_table}.{r.source_column}",
-                    "Target": f"{r.target_table}.{r.target_column}",
-                    "Cardinality": r.cardinality,
-                    "Confidence": f"{r.confidence:.1f}%",
-                    "Evidence": " | ".join(r.evidence)
-                })
-            
-            edited_df = st.data_editor(
-                pd.DataFrame(rel_data),
-                column_config={
-                    "Accept": st.column_config.CheckboxColumn(
-                        "Accept", help="Select to approve this relationship", default=False
-                    )
-                },
-                disabled=["Source", "Target", "Cardinality", "Confidence", "Evidence"],
-                hide_index=True,
-                key="rel_editor"
-            )
-            
-            if st.button("Apply Selected Relationships"):
-                accepted = []
-                for i, row in edited_df.iterrows():
-                    c = candidates[i]
-                    if row["Accept"]:
-                        c.status = RelationshipStatus.ACCEPTED.value
-                        accepted.append(c)
-                    else:
-                        c.status = RelationshipStatus.REJECTED.value
+    st.markdown("### Project Data Model & SQL Analysis")
+    p_tab1, p_tab2 = st.tabs(["Data Model", "SQL Analysis Workspace"])
+    
+    with p_tab1:
+        if st.button("Detect Relationships", type="primary"):
+            with st.spinner("Analyzing relationships across tables..."):
+                ws = st.session_state.workspace
+                tables = {}
+                for tname in ws.registry.keys():
+                    df, _ = ws.load_table(tname)
+                    tables[tname] = df
                 
-                dm = DataModel(tables=st.session_state.workspace.registry, relationships=accepted)
-                st.session_state.data_model = dm
-                st.rerun()
+                detector = RelationshipDetector()
+                candidates = detector.detect(tables)
+                st.session_state.relationship_candidates = candidates
+                st.success(f"Detected {len(candidates)} relationships candidates!")
                 
-    if "data_model" in st.session_state:
-        dm = st.session_state.data_model
-        st.markdown("#### Accepted Relationships & ER Diagram")
-        if not dm.relationships:
-            st.info("No relationships accepted.")
-        else:
-            gen = ERGenerator()
-            dot_str = gen.generate_dot(dm)
-            st.graphviz_chart(dot_str)
+        if "relationship_candidates" in st.session_state:
+            candidates = st.session_state.relationship_candidates
+            st.markdown("#### Review Relationship Candidates")
+            if not candidates:
+                st.info("No candidates detected.")
+            else:
+                rel_data = []
+                for i, r in enumerate(candidates):
+                    rel_data.append({
+                        "Accept": r.status == RelationshipStatus.ACCEPTED.value,
+                        "Source": f"{r.source_table}.{r.source_column}",
+                        "Target": f"{r.target_table}.{r.target_column}",
+                        "Cardinality": r.cardinality,
+                        "Confidence": f"{r.confidence:.1f}%",
+                        "Evidence": " | ".join(r.evidence)
+                    })
+                
+                edited_df = st.data_editor(
+                    pd.DataFrame(rel_data),
+                    column_config={
+                        "Accept": st.column_config.CheckboxColumn(
+                            "Accept", help="Select to approve this relationship", default=False
+                        )
+                    },
+                    disabled=["Source", "Target", "Cardinality", "Confidence", "Evidence"],
+                    hide_index=True,
+                    key="rel_editor"
+                )
+                
+                if st.button("Apply Selected Relationships"):
+                    accepted = []
+                    for i, row in edited_df.iterrows():
+                        c = candidates[i]
+                        if row["Accept"]:
+                            c.status = RelationshipStatus.ACCEPTED.value
+                            accepted.append(c)
+                        else:
+                            c.status = RelationshipStatus.REJECTED.value
+                    
+                    dm = DataModel(tables=st.session_state.workspace.registry, relationships=accepted)
+                    st.session_state.data_model = dm
+                    st.rerun()
+                    
+        if "data_model" in st.session_state:
+            dm = st.session_state.data_model
+            st.markdown("#### Accepted Relationships & ER Diagram")
+            if not dm.relationships:
+                st.info("No relationships accepted.")
+            else:
+                gen = ERGenerator()
+                dot_str = gen.generate_dot(dm)
+                st.graphviz_chart(dot_str)
+
+    with p_tab2:
+        st.markdown("#### SQL Workspace")
+        
+        from src.sql_engine import DuckDBEngine, SecurityError
+        from src.query_manager import QueryManager
+        from src.sql_templates import SQLTemplateLibrary
+        
+        ws = st.session_state.workspace
+        qm = QueryManager(ws.project_root)
+        library = SQLTemplateLibrary()
+        
+        # We initialize the engine lazily to avoid holding memory if not used
+        if "sql_engine" not in st.session_state:
+            st.session_state.sql_engine = DuckDBEngine(ws)
+            
+        engine = st.session_state.sql_engine
+        
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            sql_input = st.text_area("Write SQL Query", height=200, placeholder="SELECT * FROM table_name LIMIT 10")
+            
+            c_btn1, c_btn2, c_btn3 = st.columns(3)
+            with c_btn1:
+                run_btn = st.button("Run Query (Preview)", type="primary", use_container_width=True)
+            with c_btn2:
+                export_btn = st.button("Run & Export Full Result", use_container_width=True)
+            with c_btn3:
+                save_btn = st.button("Save Query", use_container_width=True)
+                
+            if save_btn and sql_input.strip():
+                qm.save_query(f"Saved Query {len(qm.get_saved_queries())+1}", sql_input)
+                st.success("Query saved!")
+                
+            if run_btn and sql_input.strip():
+                try:
+                    start_t = time.time()
+                    res_df = engine.execute_query(sql_input)
+                    dur = int((time.time() - start_t) * 1000)
+                    qm.log_history(sql_input, "SUCCESS", dur, len(res_df))
+                    st.success(f"Query executed in {dur}ms (Preview Limit: {engine.preview_limit})")
+                    st.dataframe(res_df, use_container_width=True)
+                except Exception as e:
+                    qm.log_history(sql_input, "ERROR", 0, 0, str(e))
+                    st.error(f"Error: {str(e)}")
+                    
+            if export_btn and sql_input.strip():
+                try:
+                    start_t = time.time()
+                    out_path = engine.export_query(sql_input)
+                    dur = int((time.time() - start_t) * 1000)
+                    qm.log_history(sql_input, "EXPORT", dur, None)
+                    st.success(f"Exported in {dur}ms to {out_path}")
+                    with open(out_path, "rb") as f:
+                        st.download_button("Download CSV", data=f, file_name=Path(out_path).name, mime="text/csv")
+                except Exception as e:
+                    qm.log_history(sql_input, "ERROR", 0, 0, str(e))
+                    st.error(f"Error: {str(e)}")
+                    
+        with c2:
+            st.markdown("##### Query Templates")
+            tmpl_name = st.selectbox("Select Template", [t.name for t in library.get_all_templates()])
+            if tmpl_name:
+                tmpl = library.get_template(tmpl_name)
+                st.caption(tmpl.description)
+                st.code(tmpl.template, language="sql")
+                
+            st.markdown("##### Saved Queries")
+            saved = qm.get_saved_queries()
+            if not saved:
+                st.caption("No saved queries.")
+            for q in saved:
+                st.markdown(f"**{q.name}**")
+                st.code(q.sql, language="sql")
 
 if not st.session_state.analysis_results:
     if workflow_mode != "Project Workspace":
