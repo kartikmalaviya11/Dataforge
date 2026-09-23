@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2 = st.tabs(["Data Model", "SQL Analysis Workspace"])
+    p_tab1, p_tab2, p_tab3 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -453,6 +453,143 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
                 gen = ERGenerator()
                 dot_str = gen.generate_dot(dm)
                 st.graphviz_chart(dot_str)
+
+    with p_tab3:
+        from src.sql_engine import DuckDBEngine
+        from src.feature_engineering import FeatureEngine, FeatureBuilder
+        
+        ws = st.session_state.workspace
+        if "sql_engine" not in st.session_state:
+            st.session_state.sql_engine = DuckDBEngine(ws)
+        engine = st.session_state.sql_engine
+        
+        if "fe_engine" not in st.session_state:
+            st.session_state.fe_engine = FeatureEngine(engine, ws)
+        fe = st.session_state.fe_engine
+        
+        st.markdown("#### Feature Engineering Module")
+        
+        f_tables = list(ws.registry.keys())
+        if not f_tables:
+            st.warning("No tables available.")
+        else:
+            ft_table = st.selectbox("Source Table", f_tables, key="fe_table")
+            
+            try:
+                base_cols = fe._get_base_columns(ft_table)
+            except:
+                base_cols = []
+                
+            ft_type = st.selectbox("Feature Type", [
+                "DATE_DIFFERENCE", "DATE_PART", "BOOLEAN_FLAG", "CONDITIONAL_COLUMN", 
+                "ARITHMETIC_FORMULA", "BUCKET_CATEGORY"
+            ], key="fe_type")
+            
+            ft_name = st.text_input("New Feature Name", key="fe_name")
+            
+            st.markdown("##### Configuration")
+            feat_def = None
+            
+            try:
+                if ft_type == "DATE_DIFFERENCE":
+                    c1, c2, c3 = st.columns(3)
+                    start_c = c1.selectbox("Start Date Column", base_cols, key="dd_start")
+                    end_c = c2.selectbox("End Date Column", base_cols, key="dd_end")
+                    unit_c = c3.selectbox("Unit", ["day", "month", "year"], key="dd_unit")
+                    if ft_name and start_c and end_c:
+                        feat_def = FeatureBuilder.build_date_difference(ft_name, ft_table, start_c, end_c, unit_c)
+                        
+                elif ft_type == "DATE_PART":
+                    c1, c2 = st.columns(2)
+                    col_c = c1.selectbox("Date Column", base_cols, key="dp_col")
+                    part_c = c2.selectbox("Part", ["year", "month", "quarter", "week"], key="dp_part")
+                    if ft_name and col_c:
+                        feat_def = FeatureBuilder.build_date_part(ft_name, ft_table, col_c, part_c)
+                        
+                elif ft_type == "BOOLEAN_FLAG":
+                    c1, c2, c3 = st.columns(3)
+                    col_c = c1.selectbox("Column", base_cols, key="bf_col")
+                    op_c = c2.selectbox("Operator", [">", "<", ">=", "<=", "==", "!="], key="bf_op")
+                    val_c = c3.text_input("Value", key="bf_val")
+                    if ft_name and col_c and val_c:
+                        feat_def = FeatureBuilder.build_boolean_flag(ft_name, ft_table, col_c, op_c, val_c)
+                        
+                elif ft_type == "CONDITIONAL_COLUMN":
+                    c1, c2, c3, c4 = st.columns(4)
+                    col_c = c1.selectbox("Column", base_cols, key="cc_col")
+                    op_c = c2.selectbox("Operator", [">", "<", ">=", "<=", "==", "!="], key="cc_op")
+                    val_c = c3.text_input("Value", key="cc_val")
+                    res_c = c4.text_input("Result (e.g. 'High')", key="cc_res")
+                    def_c = st.text_input("Default/Else Result", key="cc_def")
+                    if ft_name and col_c and val_c and res_c and def_c:
+                        feat_def = FeatureBuilder.build_conditional_column(ft_name, ft_table, [{"col": col_c, "op": op_c, "val": val_c, "result": res_c}], def_c)
+                        
+                elif ft_type == "ARITHMETIC_FORMULA":
+                    c1, c2, c3 = st.columns(3)
+                    col1_c = c1.selectbox("Column 1", base_cols, key="af_c1")
+                    op_c = c2.selectbox("Operator", ["+", "-", "*", "/"], key="af_op")
+                    col2_c = c3.selectbox("Column 2", base_cols, key="af_c2")
+                    if ft_name and col1_c and col2_c:
+                        feat_def = FeatureBuilder.build_arithmetic(ft_name, ft_table, col1_c, op_c, col2_c)
+                        
+                elif ft_type == "BUCKET_CATEGORY":
+                    c1, c2 = st.columns(2)
+                    col_c = c1.selectbox("Column", base_cols, key="bc_col")
+                    def_c = c2.text_input("Default Category", key="bc_def")
+                    st.caption("Simplified single-bucket UI. (Expandable in future)")
+                    b1, b2, b3 = st.columns(3)
+                    min_c = b1.text_input("Min Bound (optional)", key="bc_min")
+                    max_c = b2.text_input("Max Bound (optional)", key="bc_max")
+                    lbl_c = b3.text_input("Category Label", key="bc_lbl")
+                    if ft_name and col_c and def_c and lbl_c:
+                        bk = {"label": lbl_c}
+                        if min_c: bk["min"] = min_c
+                        if max_c: bk["max"] = max_c
+                        feat_def = FeatureBuilder.build_bucket_category(ft_name, ft_table, col_c, [bk], def_c)
+            except Exception as e:
+                st.error(f"Configuration Error: {e}")
+                
+            if feat_def:
+                st.markdown("##### Preview")
+                try:
+                    # Render preview safely
+                    df_prev = engine.execute_query(f'SELECT * FROM "{ft_table}_raw" LIMIT 5')
+                    # Build a temp preview query
+                    cols_str = ", ".join([f'"{c}"' for c in feat_def.source_columns if c in df_prev.columns])
+                    if not cols_str: cols_str = "*"
+                    preview_q = f'SELECT {cols_str}, {feat_def.expression} AS "{feat_def.feature_name}" FROM "{ft_table}_raw" LIMIT 10'
+                    df_res = engine.execute_query(preview_q)
+                    st.dataframe(df_res, use_container_width=True)
+                    
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("Create Feature", type="primary"):
+                            try:
+                                fe.create_feature(feat_def)
+                                st.success(f"Feature '{ft_name}' created successfully!")
+                                st.rerun()
+                            except Exception as ce:
+                                st.error(f"Failed to create: {ce}")
+                    with b2:
+                        if st.button("Cancel / Reject", type="secondary"):
+                            st.info("Feature creation cancelled. No changes made.")
+                            st.rerun()
+                except Exception as prev_e:
+                    st.error(f"Preview Failed: {prev_e}")
+
+            st.markdown("---")
+            st.markdown("##### Existing Features")
+            exist_feats = fe.get_features(ft_table)
+            if not exist_feats:
+                st.caption("No features defined for this table.")
+            for ex_f in exist_feats:
+                with st.expander(f"✨ {ex_f.feature_name} ({ex_f.feature_type})"):
+                    st.json({
+                        "Type": ex_f.feature_type,
+                        "Source Columns": ex_f.source_columns,
+                        "Expression": ex_f.expression,
+                        "Created": ex_f.created_at
+                    })
 
     with p_tab2:
         st.markdown("#### SQL Workspace")

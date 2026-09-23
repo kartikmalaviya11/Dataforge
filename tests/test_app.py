@@ -4,11 +4,17 @@ from pathlib import Path
 import collections
 from app import run_pipeline
 
-def test_app_pipeline_execution():
+def test_app_pipeline_execution(tmp_path):
     """Test that the app.py backend pipeline runs successfully on a valid dataset."""
-    test_file = Path("data/Ecommerce_Sales_Data.xlsx")
-    if not test_file.exists():
-        pytest.skip("Test file not found")
+    import pandas as pd
+    
+    test_file = tmp_path / "synthetic_sales.xlsx"
+    df = pd.DataFrame({
+        "order_id": [1, 2, 3],
+        "price": [10.0, 20.0, 30.0],
+        "category": ["A", "B", "C"]
+    })
+    df.to_excel(test_file, index=False)
         
     rules_file = Path("config/rules.yaml")
     
