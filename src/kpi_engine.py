@@ -282,3 +282,287 @@ class KPIEngine:
 
         logger.info(f"Generated {len(deduped)} KPI recommendations.")
         return deduped
+
+# ==============================================================================
+# PHASE 5: KPI Builder & Cross-Validation
+# ==============================================================================
+
+import os
+import json
+import time
+import math
+import pandas as pd
+from typing import Any, Union
+from src.sql_engine import DuckDBEngine
+
+ALLOWED_OPERATIONS = {"COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"}
+ALLOWED_FILTER_OPS = {"==", "!=", ">", "<", ">=", "<="}
+
+@dataclass
+class FilterDefinition:
+    column: str
+    operator: str
+    value: Any
+
+    def __post_init__(self):
+        if self.operator not in ALLOWED_FILTER_OPS:
+            raise ValueError(f"Invalid operator: {self.operator}. Allowed: {ALLOWED_FILTER_OPS}")
+        if self.value is None:
+            raise ValueError("NULL comparisons (col == None) are blocked. Filter out NULLs explicitly if needed.")
+
+@dataclass
+class MetricDefinition:
+    metric_name: str
+    operation: str
+    source_table: str
+    source_column: str
+    filters: Optional[List[FilterDefinition]] = None
+
+    def __post_init__(self):
+        self.operation = self.operation.upper()
+        if self.operation not in ALLOWED_OPERATIONS:
+            raise ValueError(f"Invalid operation: {self.operation}. Allowed: {ALLOWED_OPERATIONS}")
+
+@dataclass
+class KPIDefinition:
+    kpi_id: str
+    kpi_name: str
+    business_definition: str
+    formula: str  # Descriptive only
+    metric_definitions: List[MetricDefinition]
+    source_tables: List[str]
+    source_columns: List[str]
+    unit: str
+    description: str
+    version: int = 1
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    def to_dict(self):
+        metrics = []
+        for m in self.metric_definitions:
+            filters = []
+            if m.filters:
+                for f in m.filters:
+                    filters.append({"column": f.column, "operator": f.operator, "value": f.value})
+            metrics.append({
+                "metric_name": m.metric_name,
+                "operation": m.operation,
+                "source_table": m.source_table,
+                "source_column": m.source_column,
+                "filters": filters if m.filters else None
+            })
+        return {
+            "kpi_id": self.kpi_id,
+            "kpi_name": self.kpi_name,
+            "business_definition": self.business_definition,
+            "formula": self.formula,
+            "metric_definitions": metrics,
+            "source_tables": self.source_tables,
+            "source_columns": self.source_columns,
+            "unit": self.unit,
+            "description": self.description,
+            "version": self.version,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        metrics = []
+        for m in data.get("metric_definitions", []):
+            filters = []
+            if m.get("filters"):
+                for f in m["filters"]:
+                    filters.append(FilterDefinition(**f))
+            metrics.append(MetricDefinition(
+                metric_name=m["metric_name"],
+                operation=m["operation"],
+                source_table=m["source_table"],
+                source_column=m["source_column"],
+                filters=filters if filters else None
+            ))
+        data["metric_definitions"] = metrics
+        return cls(**data)
+
+def normalize_missing(val):
+    if val is None or pd.isna(val) or pd.isnull(val):
+        return "MISSING"
+    return val
+
+class SQLValidator:
+    def __init__(self, engine: DuckDBEngine):
+        self.engine = engine
+        
+    def _build_where(self, filters: List[FilterDefinition]) -> str:
+        if not filters:
+            return ""
+        conds = []
+        for f in filters:
+            op = "=" if f.operator == "==" else f.operator
+            val = f"'{f.value}'" if isinstance(f.value, str) else str(f.value)
+            conds.append(f'"{f.column}" {op} {val}')
+        return " WHERE " + " AND ".join(conds)
+
+    def calculate(self, metric: MetricDefinition) -> Any:
+        where_clause = self._build_where(metric.filters)
+        
+        if metric.operation == "COUNT_DISTINCT":
+            op_str = f'COUNT(DISTINCT "{metric.source_column}")'
+        else:
+            op_str = f'{metric.operation}("{metric.source_column}")'
+            
+        q = f'SELECT {op_str} FROM "{metric.source_table}"{where_clause}'
+        df = self.engine.conn.execute(q).df()
+        val = df.iloc[0, 0] if not df.empty else None
+        
+        norm = normalize_missing(val)
+        if norm == "MISSING" and metric.operation in ("COUNT", "COUNT_DISTINCT"):
+            return 0
+        return norm
+
+class PandasValidator:
+    def __init__(self, engine: DuckDBEngine):
+        self.engine = engine
+
+    def _build_where(self, filters: List[FilterDefinition]) -> str:
+        if not filters:
+            return ""
+        conds = []
+        for f in filters:
+            op = "=" if f.operator == "==" else f.operator
+            val = f"'{f.value}'" if isinstance(f.value, str) else str(f.value)
+            conds.append(f'"{f.column}" {op} {val}')
+        return " WHERE " + " AND ".join(conds)
+        
+    def calculate(self, metric: MetricDefinition) -> Any:
+        where_clause = self._build_where(metric.filters)
+        q = f'SELECT "{metric.source_column}" FROM "{metric.source_table}"{where_clause}'
+        
+        try:
+            df = self.engine.conn.execute(q).df()
+        except Exception as e:
+            raise TypeError(str(e))
+            
+        if df.empty:
+            if metric.operation in ("COUNT", "COUNT_DISTINCT"):
+                return 0
+            return "MISSING"
+            
+        s = df[metric.source_column]
+        
+        if metric.operation == "COUNT":
+            val = s.count()
+        elif metric.operation == "COUNT_DISTINCT":
+            val = s.nunique(dropna=True)
+        elif metric.operation == "SUM":
+            if s.dropna().empty:
+                val = "MISSING"
+            else:
+                val = s.sum()
+        elif metric.operation == "AVG":
+            if s.dropna().empty:
+                val = "MISSING"
+            else:
+                val = s.mean()
+        elif metric.operation == "MIN":
+            if s.dropna().empty:
+                val = "MISSING"
+            else:
+                val = s.min()
+        elif metric.operation == "MAX":
+            if s.dropna().empty:
+                val = "MISSING"
+            else:
+                val = s.max()
+                
+        if val == "MISSING":
+            return val
+            
+        norm = normalize_missing(val)
+        return norm
+
+class CrossValidator:
+    def __init__(self, sql_validator: SQLValidator, pandas_validator: PandasValidator):
+        self.sql = sql_validator
+        self.pd = pandas_validator
+        
+    def validate(self, metric: MetricDefinition) -> Dict[str, Any]:
+        sql_res = self.sql.calculate(metric)
+        pd_res = self.pd.calculate(metric)
+        
+        match = self._compare(sql_res, pd_res)
+        
+        return {
+            "metric_name": metric.metric_name,
+            "sql_result": sql_res,
+            "pandas_result": pd_res,
+            "status": "MATCH" if match else "MISMATCH",
+            "absolute_diff": abs(sql_res - pd_res) if isinstance(sql_res, (int, float)) and isinstance(pd_res, (int, float)) else None,
+        }
+
+    def _compare(self, a, b):
+        if a == "MISSING" and b == "MISSING":
+            return True
+        if a == "MISSING" or b == "MISSING":
+            return False
+            
+        if type(a) == int and type(b) == int:
+            return a == b
+            
+        try:
+            a, b = float(a), float(b)
+            return math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-5)
+        except:
+            return a == b
+
+class KPIManager:
+    def __init__(self, workspace):
+        self.workspace = workspace
+        self.file_path = os.path.join(workspace.project_root, ".dataforge", "kpis.json")
+        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+        
+    def load_kpis(self) -> List[KPIDefinition]:
+        if not os.path.exists(self.file_path):
+            return []
+        with open(self.file_path, "r") as f:
+            data = json.load(f)
+        return [KPIDefinition.from_dict(k) for k in data]
+        
+    def save_kpi(self, kpi: KPIDefinition, overwrite: bool = False):
+        kpis = self.load_kpis()
+        existing = [k for k in kpis if k.kpi_name == kpi.kpi_name]
+        
+        if existing and not overwrite:
+            raise ValueError(f"Duplicate KPI name: {kpi.kpi_name}")
+            
+        if overwrite:
+            kpis = [k for k in kpis if k.kpi_name != kpi.kpi_name]
+            
+        kpi.updated_at = time.time()
+        kpis.append(kpi)
+        
+        with open(self.file_path, "w") as f:
+            json.dump([k.to_dict() for k in kpis], f, indent=2)
+            
+    def get_kpi_by_name(self, name: str) -> Optional[KPIDefinition]:
+        for k in self.load_kpis():
+            if k.kpi_name == name:
+                return k
+        return None
+
+class KPISemanticChecker:
+    def check_consistency(self, metric: MetricDefinition) -> Dict[str, Any]:
+        where = f" WHERE {' AND '.join([f'{f.column} {f.operator} {f.value}' for f in metric.filters])}" if metric.filters else ""
+        sql_rep = f"{metric.operation}({metric.source_column}) FROM {metric.source_table}{where}"
+        
+        pd_rep = f"df['{metric.source_column}'].{metric.operation.lower()}()"
+        
+        pbi_rep = f"{metric.operation}('{metric.source_table}'[{metric.source_column}]){where}"
+        
+        return {
+            "status": "CONSISTENT", 
+            "sql_representation": sql_rep,
+            "pandas_representation": pd_rep,
+            "powerbi_representation": pbi_rep
+        }

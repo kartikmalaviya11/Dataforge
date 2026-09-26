@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2, p_tab3 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering"])
+    p_tab1, p_tab2, p_tab3, p_tab4 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -664,6 +664,129 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
             for q in saved:
                 st.markdown(f"**{q.name}**")
                 st.code(q.sql, language="sql")
+                
+    with p_tab4:
+        st.markdown("### KPI Builder & Cross-Validation")
+        st.markdown("Define analytical KPIs and validate their SQL ↔ Pandas calculation consistency.")
+        
+        from src.kpi_engine import KPIManager, KPIDefinition, MetricDefinition, FilterDefinition, CrossValidator, SQLValidator, PandasValidator, KPISemanticChecker
+        import uuid
+        
+        kpi_mgr = KPIManager(st.session_state.workspace)
+        engine = DuckDBEngine(st.session_state.workspace)
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.markdown("#### Create New KPI")
+            with st.form("kpi_form"):
+                kpi_name = st.text_input("KPI Name", placeholder="e.g. Total Revenue")
+                kpi_desc = st.text_area("Business Definition", placeholder="Total sum of successful transactions...")
+                
+                st.markdown("##### Metric Definition")
+                op = st.selectbox("Operation", ["COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"])
+                
+                tables = list(st.session_state.workspace.registry.keys())
+                src_tbl = st.selectbox("Source Table", tables, key="kpi_src_tbl")
+                
+                # Fetch columns for the table
+                df_temp, _ = st.session_state.workspace.load_table(src_tbl)
+                cols = list(df_temp.columns)
+                src_col = st.selectbox("Source Column", cols, key="kpi_src_col")
+                
+                st.markdown("##### Filters (Optional)")
+                f_col = st.selectbox("Filter Column", ["None"] + cols, key="kpi_f_col")
+                f_op = st.selectbox("Operator", ["==", "!=", ">", "<", ">=", "<="])
+                f_val = st.text_input("Value")
+                
+                create_kpi_btn = st.form_submit_button("Validate & Save KPI", type="primary")
+                
+                if create_kpi_btn:
+                    if not kpi_name or not src_tbl or not src_col:
+                        st.error("Name, Table, and Column are required.")
+                    else:
+                        filters = []
+                        if f_col != "None" and f_val:
+                            # Try to infer type
+                            try:
+                                if "." in f_val: f_val = float(f_val)
+                                else: f_val = int(f_val)
+                            except:
+                                pass
+                            filters.append(FilterDefinition(column=f_col, operator=f_op, value=f_val))
+                            
+                        metric = MetricDefinition(
+                            metric_name=kpi_name,
+                            operation=op,
+                            source_table=src_tbl,
+                            source_column=src_col,
+                            filters=filters if filters else None
+                        )
+                        
+                        cross = CrossValidator(SQLValidator(engine), PandasValidator(engine))
+                        checker = KPISemanticChecker()
+                        
+                        try:
+                            # 1. Semantic Check
+                            sem = checker.check_consistency(metric)
+                            
+                            # 2. Cross Validation
+                            res = cross.validate(metric)
+                            
+                            st.session_state.last_kpi_validation = res
+                            st.session_state.last_kpi_semantic = sem
+                            
+                            if res["status"] == "MATCH":
+                                kpi_def = KPIDefinition(
+                                    kpi_id=str(uuid.uuid4()),
+                                    kpi_name=kpi_name,
+                                    business_definition=kpi_desc,
+                                    formula=f"{op}({src_col})",
+                                    metric_definitions=[metric],
+                                    source_tables=[src_tbl],
+                                    source_columns=[src_col],
+                                    unit="",
+                                    description=kpi_desc
+                                )
+                                kpi_mgr.save_kpi(kpi_def, overwrite=True)
+                                st.success(f"KPI '{kpi_name}' validated and saved!")
+                            else:
+                                st.error("Validation Failed! SQL and Pandas results mismatch.")
+                        except Exception as e:
+                            st.error(f"Error validating KPI: {e}")
+                            
+        with c2:
+            st.markdown("#### Validation Results")
+            if "last_kpi_validation" in st.session_state:
+                res = st.session_state.last_kpi_validation
+                sem = st.session_state.last_kpi_semantic
+                
+                if res["status"] == "MATCH":
+                    st.success("✅ SQL ↔ Pandas Match")
+                else:
+                    st.error("❌ SQL ↔ Pandas Mismatch")
+                    
+                st.markdown(f"**SQL Result:** `{res['sql_result']}`")
+                st.markdown(f"**Pandas Result:** `{res['pandas_result']}`")
+                if res['absolute_diff'] is not None:
+                    st.caption(f"Absolute Difference: {res['absolute_diff']}")
+                    
+                with st.expander("Semantic Consistency Check", expanded=True):
+                    st.code(f"-- SQL Representation\\n{sem['sql_representation']}", language="sql")
+                    st.code(f"# Pandas Representation\\n{sem['pandas_representation']}", language="python")
+                    st.code(f"// Power BI DAX\\n{sem['powerbi_representation']}", language="dax")
+                    
+            st.markdown("---")
+            st.markdown("#### Saved KPIs")
+            kpis = kpi_mgr.load_kpis()
+            if not kpis:
+                st.info("No KPIs defined yet.")
+            else:
+                for k in kpis:
+                    with st.expander(f"📊 {k.kpi_name}"):
+                        st.write(k.business_definition)
+                        m = k.metric_definitions[0]
+                        st.code(f"{m.operation}({m.source_table}.{m.source_column})", language="sql")
+
 
 if not st.session_state.analysis_results:
     if workflow_mode != "Project Workspace":
