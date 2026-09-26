@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2, p_tab3, p_tab4 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder"])
+    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -786,6 +786,136 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
                         st.write(k.business_definition)
                         m = k.metric_definitions[0]
                         st.code(f"{m.operation}({m.source_table}.{m.source_column})", language="sql")
+    with p_tab5:
+        st.markdown("### Business Question Tracker")
+        from src.business_questions import QuestionManager, InvalidStatusError, InvalidTransitionError
+        from src.kpi_engine import KPIManager
+        from src.sql_engine import DuckDBEngine, SecurityError
+        
+        q_mgr = QuestionManager(st.session_state.workspace)
+        kpi_mgr = KPIManager(st.session_state.workspace)
+        db_eng = DuckDBEngine(st.session_state.workspace)
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.markdown("#### Ask a Question")
+            with st.form("new_q_form"):
+                new_q = st.text_input("New Business Question")
+                if st.form_submit_button("Create Question", type="primary"):
+                    if new_q:
+                        q_mgr.create_question(new_q)
+                        st.success("Question created!")
+                        st.rerun()
+                    else:
+                        st.error("Question cannot be empty.")
+                        
+            active_qs = q_mgr.get_active_questions()
+            archived_qs = q_mgr.get_archived_questions()
+            
+            view_mode = st.radio("View", ["Active", "Archived"], horizontal=True)
+            qs_to_show = active_qs if view_mode == "Active" else archived_qs
+            
+            st.markdown(f"**{len(qs_to_show)} {view_mode} Questions**")
+            
+            selected_q_id = None
+            for q in qs_to_show:
+                if st.button(f"[{q.status}] {q.question[:30]}...", key=f"q_btn_{q.question_id}"):
+                    st.session_state.selected_bq_id = q.question_id
+                    
+            if "selected_bq_id" in st.session_state:
+                selected_q_id = st.session_state.selected_bq_id
+                
+        with c2:
+            if selected_q_id:
+                q = q_mgr.get_question(selected_q_id)
+                if not q:
+                    st.info("Question not found.")
+                else:
+                    st.markdown(f"#### {q.question}")
+                    st.caption(f"Status: **{q.status}**")
+                    
+                    with st.expander("Status & Lifecycle", expanded=True):
+                        c_stat, c_act = st.columns(2)
+                        new_stat = c_stat.selectbox("Change Status", ["Pending", "Investigating", "Completed"], index=["Pending", "Investigating", "Completed"].index(q.status))
+                        reason = c_act.text_input("Reason for change (optional)")
+                        if c_act.button("Update Status"):
+                            try:
+                                q_mgr.transition_status(q.question_id, new_stat, reason if reason else None)
+                                st.success("Status updated")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
+                                
+                        if not q.is_archived:
+                            if st.button("Archive Question"):
+                                q_mgr.archive_question(q.question_id)
+                                st.rerun()
+                        else:
+                            if st.button("Unarchive Question"):
+                                q_mgr.unarchive_question(q.question_id)
+                                st.rerun()
+                                
+                        st.markdown("**History:**")
+                        for h in q.status_history:
+                            st.caption(f"-> {h['new_status']} ({h.get('reason', '')})")
+
+                    with st.expander("Details & Analysis", expanded=True):
+                        desc = st.text_area("Description", value=q.description or "")
+                        pandas_notes = st.text_area("Pandas Analysis / Notes", value=q.pandas_analysis or "")
+                        result_text = st.text_area("Result", value=q.result or "")
+                        finding_text = st.text_area("Finding", value=q.finding or "")
+                        
+                        kpis = kpi_mgr.load_kpis()
+                        kpi_options = {"None": None}
+                        for k in kpis:
+                            kpi_options[f"{k.kpi_name} ({k.kpi_id})"] = k.kpi_id
+                            
+                        # Handle orphaned references safely
+                        cur_kpi_idx = 0
+                        if q.related_kpi_id:
+                            if q.related_kpi_id not in kpi_options.values():
+                                kpi_options[f"Orphaned/Deleted KPI ({q.related_kpi_id})"] = q.related_kpi_id
+                            
+                        kpi_names = list(kpi_options.keys())
+                        cur_idx = 0
+                        for i, name in enumerate(kpi_names):
+                            if kpi_options[name] == q.related_kpi_id:
+                                cur_idx = i
+                                break
+                        
+                        rel_kpi = st.selectbox("Related KPI", kpi_names, index=cur_idx)
+                        kpi_val = kpi_options[rel_kpi]
+                        
+                        rel_vis = st.text_input("Dashboard Visual Reference", value=q.related_dashboard_visual or "")
+                        
+                        if st.button("Save Details"):
+                            q_mgr.update_question(
+                                q.question_id,
+                                description=desc,
+                                pandas_analysis=pandas_notes,
+                                result=result_text,
+                                finding=finding_text,
+                                related_kpi_id=kpi_val,
+                                related_dashboard_visual=rel_vis
+                            )
+                            st.success("Details saved!")
+                            st.rerun()
+                            
+                    with st.expander("SQL Attachment", expanded=True):
+                        sql = st.text_area("Attached SQL", value=q.sql_query or "")
+                        col_run, col_save = st.columns(2)
+                        
+                        if col_run.button("Run SQL (Preview)", type="primary"):
+                            try:
+                                res_df = db_eng.execute_query(sql)
+                                st.dataframe(res_df)
+                            except Exception as e:
+                                st.error(f"Execution Error: {e}")
+                                
+                        if col_save.button("Save SQL"):
+                            q_mgr.update_question(q.question_id, sql_query=sql)
+                            st.success("SQL Saved!")
+                            st.rerun()
 
 
 if not st.session_state.analysis_results:
@@ -1053,3 +1183,4 @@ else:
         st.markdown("---")
         zip_data = create_zip_archive(out_dir)
         st.download_button("Download All Reports (ZIP)", zip_data, "analytics_reports.zip", "application/zip", type="primary", use_container_width=True)
+

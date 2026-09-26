@@ -335,6 +335,7 @@ class KPIDefinition:
     unit: str
     description: str
     version: int = 1
+    is_active: bool = True
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -363,6 +364,7 @@ class KPIDefinition:
             "unit": self.unit,
             "description": self.description,
             "version": self.version,
+            "is_active": self.is_active,
             "created_at": self.created_at,
             "updated_at": self.updated_at
         }
