@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6, p_tab7, p_tab8, p_tab9, p_tab10 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions", "Segmentation", "Anomalies", "Date Analysis", "RCA Workbench", "Business Findings"])
+    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6, p_tab7, p_tab8, p_tab9, p_tab10, p_tab11, p_tab12 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions", "Segmentation", "Anomalies", "Date Analysis", "RCA Workbench", "Business Findings", "Power BI Model", "Data Lineage"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -1222,6 +1222,91 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
                     if st.button("Archive", key=f"arch_{f.finding_id}"):
                         find_eng.archive_finding(f.finding_id)
                         st.rerun()
+
+    with p_tab11:
+        st.markdown("### Power BI Model Generator")
+        if st.button("Generate Specification"):
+            from src.model_generator import ModelGenerator
+            from src.kpi_engine import KPIManager
+            from src.date_analysis_engine import DateAnalysisEngine
+            
+            kpi_mgr = KPIManager(st.session_state.workspace)
+            date_eng = DateAnalysisEngine(st.session_state.workspace, st.session_state.sql_engine)
+            model_gen = ModelGenerator(st.session_state.data_model, date_eng.load_configs(), kpi_mgr.load_kpis())
+            
+            spec = model_gen.generate()
+            model_gen.save_specification(spec, st.session_state.workspace.base_path)
+            
+            st.success("Model Specification Generated!")
+            if spec.status.value != "VALID":
+                st.warning(f"Model generated with status: {spec.status.value}")
+            
+            for w in spec.warnings:
+                st.error(w)
+                
+            st.write("#### Tables")
+            table_data = [{"Table": t.table_name, "Role": t.role.value, "Primary Key": t.primary_key, "Reasoning": t.reasoning} for t in spec.tables]
+            st.dataframe(table_data)
+            
+            st.write("#### Relationships")
+            rel_data = [{"Source": r.source_table, "Target": r.target_table, "Cardinality": r.cardinality, "Direction": r.filter_direction, "Status": r.relationship_status.value} for r in spec.relationships]
+            st.dataframe(rel_data)
+            
+            st.write("#### Date Table")
+            if spec.date_table:
+                st.write(f"Date Table: {spec.date_table.date_table_name}, Status: {spec.date_table.selection_evidence}")
+            else:
+                st.write("No date table configured.")
+                
+            st.write("#### Measures")
+            measure_data = [{"KPI": m.measure_name, "Aggregation": m.aggregation, "Formula": m.formula, "Status": m.status.value} for m in spec.suggested_measures]
+            st.dataframe(measure_data)
+
+    with p_tab12:
+        st.markdown("### Data Lineage Tracker")
+        if st.button("Generate Lineage Graph"):
+            from src.lineage_tracker import LineageTracker, RawColumnMeta, CleanedColumnMeta, FeatureMeta, SQLMetricMeta, KPIMeta
+            from src.feature_engineering import FeatureEngine
+            from src.kpi_engine import KPIManager
+            
+            raw_cols = []
+            for t_name, t in st.session_state.workspace.registry.items():
+                if t.columns:
+                    for c_name in t.columns.keys():
+                        raw_cols.append(RawColumnMeta(t_name, c_name))
+            
+            feat_eng = FeatureEngine(st.session_state.workspace, st.session_state.sql_engine)
+            features = []
+            for fg in feat_eng.load_feature_groups():
+                for f in fg.features:
+                    features.append(FeatureMeta(f.feature_id, f.feature_name, fg.target_table, f.source_columns, f.expression))
+                    
+            kpi_mgr = KPIManager(st.session_state.workspace)
+            sql_metrics = []
+            kpis_meta = []
+            for k in kpi_mgr.load_kpis():
+                for m in k.metric_definitions:
+                    # Treat each metric definition as an SQL metric
+                    sql_metrics.append(SQLMetricMeta(f"m_{k.kpi_id}_{m.metric_name}", m.metric_name, m.source_table, [m.source_column]))
+                kpis_meta.append(KPIMeta(k.kpi_id, k.kpi_name, [f"m_{k.kpi_id}_{m.metric_name}" for m in k.metric_definitions]))
+                
+            tracker = LineageTracker(raw_columns=raw_cols, features=features, sql_metrics=sql_metrics, kpis=kpis_meta)
+            graph = tracker.build_graph()
+            tracker.save_graph(graph, st.session_state.workspace.base_path)
+            
+            st.success("Lineage Graph Generated!")
+            if graph.status.value != "VALID":
+                st.warning(f"Graph Status: {graph.status.value}")
+                
+            unresolved = [n for n in graph.nodes.values() if n.status.value != "VALID"]
+            if unresolved:
+                st.write("#### Unresolved Nodes / Warnings")
+                for u in unresolved:
+                    st.error(f"{u.node_type.value} '{u.object_name}': {', '.join(u.warnings)}")
+                    
+            st.write("#### Lineage Graph Edges")
+            edge_data = [{"Source": e.source_node_id, "Target": e.target_node_id, "Phase": e.source_phase, "Transformation": e.transformation} for e in graph.edges]
+            st.dataframe(edge_data)
 
 
 if not st.session_state.analysis_results:
