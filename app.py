@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions"])
+    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6, p_tab7, p_tab8 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions", "Segmentation", "Anomalies", "Date Analysis"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -917,6 +917,166 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
                             st.success("SQL Saved!")
                             st.rerun()
 
+
+
+    with p_tab6:
+        st.markdown("### Analytical Segmentation")
+        from src.segmentation_engine import SegmentationEngine, SegmentDefinition, ExplicitThresholdRule
+        from src.kpi_engine import KPIManager
+        
+        seg_eng = SegmentationEngine(st.session_state.workspace)
+        kpi_mgr = KPIManager(st.session_state.workspace)
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.markdown("#### Create Segmentation")
+            with st.form("seg_form"):
+                seg_id = st.text_input("Segment ID (Name)")
+                entity_type = st.selectbox("Entity Type", ["customer", "seller", "product"])
+                
+                tables = list(st.session_state.workspace.registry.keys())
+                source_table = st.selectbox("Source Table", tables if tables else [""])
+                
+                entity_key = st.text_input("Entity Key Column")
+                
+                kpis = kpi_mgr.load_kpis()
+                kpi_options = {k.kpi_name: k.kpi_id for k in kpis}
+                kpi_sel = st.selectbox("Metric Reference (KPI)", list(kpi_options.keys()) if kpi_options else [""])
+                metric_ref = kpi_options.get(kpi_sel, "")
+                
+                # Simplified Explicit Rule for UI testing
+                st.markdown("**Threshold 1 (Lower Bound = 0)**")
+                u1 = st.number_input("Upper Bound 1", value=50.0)
+                l1_label = st.text_input("Label 1", value="Low")
+                
+                st.markdown("**Threshold 2 (Upper Bound = Infinity)**")
+                l2_label = st.text_input("Label 2", value="High")
+                
+                missing_val = st.selectbox("Missing Value Handling", ["EXCLUDE", "NULL_LABEL"])
+                
+                preview = st.form_submit_button("Preview")
+                save = st.form_submit_button("Save Configuration")
+                
+        with c2:
+            if preview and seg_id and source_table and entity_key and metric_ref:
+                try:
+                    rules = [
+                        ExplicitThresholdRule(lower_bound=0.0, lower_inclusive=True, upper_bound=u1, upper_inclusive=False, label=l1_label),
+                        ExplicitThresholdRule(lower_bound=u1, lower_inclusive=True, upper_bound=999999999.0, upper_inclusive=False, label=l2_label)
+                    ]
+                    df = seg_eng.preview_segmentation(
+                        entity_type=entity_type,
+                        source_table=source_table,
+                        entity_key=entity_key,
+                        metric_reference=metric_ref,
+                        method="EXPLICIT_THRESHOLDS",
+                        rules=rules,
+                        missing_value_handling=missing_val
+                    )
+                    st.success("Preview Generated!")
+                    st.dataframe(df.head(100))
+                except Exception as e:
+                    st.error(f"Validation Error: {e}")
+                    
+            if save and seg_id and source_table and entity_key and metric_ref:
+                try:
+                    rules = [
+                        ExplicitThresholdRule(lower_bound=0.0, lower_inclusive=True, upper_bound=u1, upper_inclusive=False, label=l1_label),
+                        ExplicitThresholdRule(lower_bound=u1, lower_inclusive=True, upper_bound=999999999.0, upper_inclusive=False, label=l2_label)
+                    ]
+                    seg_eng.create_segmentation(
+                        segment_id=seg_id,
+                        entity_type=entity_type,
+                        source_table=source_table,
+                        entity_key=entity_key,
+                        metric_reference=metric_ref,
+                        method="EXPLICIT_THRESHOLDS",
+                        rules=rules,
+                        missing_value_handling=missing_val
+                    )
+                    st.success("Segmentation Saved!")
+                except Exception as e:
+                    st.error(f"Error Saving: {e}")
+                    
+        st.markdown("#### Existing Segmentations")
+        for s in seg_eng.load_segmentations():
+            st.write(f"- **{s.segment_id}** ({s.entity_type} via {s.metric_reference})")
+
+    with p_tab7:
+        st.markdown("### Outlier & Anomaly Analysis")
+        from src.anomaly_engine import AnomalyEngine
+        ano_eng = AnomalyEngine(st.session_state.workspace)
+        
+        ac1, ac2 = st.columns([1, 2])
+        with ac1:
+            with st.form("ano_form"):
+                ano_id = st.text_input("Analysis ID")
+                tables = list(st.session_state.workspace.registry.keys())
+                source_table = st.selectbox("Source Table (Anomaly)", tables if tables else [""])
+                source_col = st.text_input("Source Column (Numeric)")
+                method = st.selectbox("Detection Method", ["IQR", "Z_SCORE"])
+                
+                preview_a = st.form_submit_button("Preview")
+                save_a = st.form_submit_button("Run & Save Analysis")
+                
+        with ac2:
+            if preview_a and ano_id and source_table and source_col:
+                try:
+                    res = ano_eng.run_analysis(ano_id, source_table, source_col, method, {})
+                    st.success(f"Preview: Found {len(res.outlier_records)} outliers.")
+                    if res.outlier_records:
+                        import pandas as pd
+                        st.dataframe(pd.DataFrame([r.__dict__ for r in res.outlier_records]).head(100))
+                except Exception as e:
+                    st.error(f"Validation Error: {e}")
+                    
+            if save_a and ano_id and source_table and source_col:
+                try:
+                    res = ano_eng.run_analysis(ano_id, source_table, source_col, method, {})
+                    ano_eng.save_analysis(res)
+                    st.success("Analysis Saved!")
+                except Exception as e:
+                    st.error(f"Error Saving: {e}")
+                    
+        st.markdown("#### Existing Analyses")
+        for a in ano_eng.load_analyses():
+            st.write(f"- **{a.analysis_id}** ({a.method} on {a.source_table}.{a.source_column}): {len(a.outlier_records)} outliers")
+
+    with p_tab8:
+        st.markdown("### Date Analysis Engine")
+        from src.date_analysis_engine import DateAnalysisEngine
+        date_eng = DateAnalysisEngine(st.session_state.workspace)
+        
+        dc1, dc2 = st.columns([1, 2])
+        with dc1:
+            with st.form("date_form"):
+                config_id = st.text_input("Config ID")
+                tables = list(st.session_state.workspace.registry.keys())
+                source_table = st.selectbox("Source Table (Date)", tables if tables else [""])
+                date_col = st.text_input("Date Column")
+                
+                preview_d = st.form_submit_button("Preview Date Table")
+                save_d = st.form_submit_button("Generate & Save Date Table")
+                
+        with dc2:
+            if preview_d and config_id and source_table and date_col:
+                try:
+                    df = date_eng.preview_date_table(config_id, source_table, date_col)
+                    st.success("Date Table Preview Generated!")
+                    st.dataframe(df.head(100))
+                except Exception as e:
+                    st.error(f"Validation Error: {e}")
+                    
+            if save_d and config_id and source_table and date_col:
+                try:
+                    date_eng.create_date_config(config_id, source_table, date_col)
+                    st.success("Date Table Generated and Saved!")
+                except Exception as e:
+                    st.error(f"Error Saving: {e}")
+                    
+        st.markdown("#### Existing Date Configurations")
+        for d in date_eng.load_configs():
+            st.write(f"- **{d.config_id}** ({d.source_table}.{d.date_column})")
 
 if not st.session_state.analysis_results:
     if workflow_mode != "Project Workspace":
