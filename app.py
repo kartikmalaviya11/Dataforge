@@ -385,7 +385,7 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 if workflow_mode == "Project Workspace" and "workspace" in st.session_state and st.session_state.workspace.registry:
     st.markdown("### Project Data Model & SQL Analysis")
-    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6, p_tab7, p_tab8 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions", "Segmentation", "Anomalies", "Date Analysis"])
+    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6, p_tab7, p_tab8, p_tab9, p_tab10 = st.tabs(["Data Model", "SQL Analysis Workspace", "Feature Engineering", "KPI Builder", "Business Questions", "Segmentation", "Anomalies", "Date Analysis", "RCA Workbench", "Business Findings"])
     
     with p_tab1:
         if st.button("Detect Relationships", type="primary"):
@@ -1077,6 +1077,152 @@ if workflow_mode == "Project Workspace" and "workspace" in st.session_state and 
         st.markdown("#### Existing Date Configurations")
         for d in date_eng.load_configs():
             st.write(f"- **{d.config_id}** ({d.source_table}.{d.date_column})")
+
+
+    with p_tab9:
+        st.markdown("### Root Cause Analysis (RCA) Workbench")
+        from src.rca_engine import RCAEngine, RCAAnalysisDefinition, RCACondition
+        
+        kpi_mgr = KPIManager(st.session_state.workspace)
+        rca_engine = RCAEngine(st.session_state.workspace, st.session_state.data_model, kpi_mgr)
+        
+        kpis = kpi_mgr.load_kpis()
+        kpi_options = {k.kpi_name: k.kpi_id for k in kpis}
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            with st.form("rca_form"):
+                analysis_id = st.text_input("Analysis ID", value="rca_" + str(uuid.uuid4())[:8])
+                problem = st.text_input("Problem Statement")
+                
+                tables = list(st.session_state.workspace.registry.keys())
+                source_table = st.selectbox("Source Table (Affected)", tables if tables else [""])
+                target_kpi = st.selectbox("Target KPI", list(kpi_options.keys()) if kpi_options else [""])
+                
+                st.markdown("#### Affected Condition")
+                aff_col = st.text_input("Column")
+                aff_op = st.selectbox("Operator", ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN_OR_EQUAL", "IS_NULL", "IS_NOT_NULL", "IN"])
+                aff_val = st.text_input("Value")
+                
+                st.markdown("#### Baseline & Dimension")
+                baseline_type = st.selectbox("Baseline Type", ["BASELINE_COMPLEMENT", "BASELINE_ALL", "BASELINE_CUSTOM"])
+                
+                dim_table = st.selectbox("Dimension Table", tables if tables else [""])
+                dim_col = st.text_input("Dimension Column")
+                
+                preview_btn = st.form_submit_button("Preview Analysis")
+                save_btn = st.form_submit_button("Save Analysis")
+        
+        with c2:
+            if preview_btn or save_btn:
+                try:
+                    val = aff_val
+                    if val.isdigit(): val = int(val)
+                    elif val.replace('.', '', 1).isdigit(): val = float(val)
+                    
+                    conditions = [RCACondition(column=aff_col, operator=aff_op, value=val)]
+                    
+                    config = RCAAnalysisDefinition(
+                        analysis_id=analysis_id,
+                        problem_definition=problem,
+                        source_table=source_table,
+                        target_metric_kpi_id=kpi_options.get(target_kpi, ""),
+                        affected_conditions=conditions,
+                        baseline_type=baseline_type,
+                        custom_baseline_conditions=None,
+                        dimension_table=dim_table,
+                        dimension_column=dim_col,
+                        minimum_affected_sample_size=30,
+                        minimum_baseline_sample_size=30,
+                        created_at=time.time()
+                    )
+                    
+                    df = rca_engine.execute_analysis(config)
+                    st.success("Analysis executed successfully!")
+                    st.dataframe(df)
+                    
+                    if save_btn:
+                        rca_engine.save_analysis(config)
+                        st.success("Analysis saved!")
+                except Exception as e:
+                    st.error(f"Error executing analysis: {e}")
+                    
+        st.markdown("#### Saved Analyses")
+        saved = rca_engine.load_analyses()
+        for a in saved:
+            st.write(f"- **{a.analysis_id}**: {a.problem_definition} (Dim: {a.dimension_table}.{a.dimension_column})")
+
+    with p_tab10:
+        st.markdown("### Business Finding Builder")
+        from src.finding_engine import FindingEngine, FindingDefinition
+        
+        find_eng = FindingEngine(st.session_state.workspace)
+        kpi_mgr = KPIManager(st.session_state.workspace)
+        rca_engine = RCAEngine(st.session_state.workspace, st.session_state.data_model, kpi_mgr)
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            with st.form("finding_form"):
+                f_id = st.text_input("Finding ID", value="fnd_" + str(uuid.uuid4())[:8])
+                kpis = kpi_mgr.load_kpis()
+                kpi_map = {k.kpi_name: k.kpi_id for k in kpis}
+                f_kpi = st.selectbox("KPI", list(kpi_map.keys()) if kpi_map else [""])
+                
+                rcas = rca_engine.load_analyses()
+                rca_map = {r.analysis_id: r.analysis_id for r in rcas}
+                f_rca = st.selectbox("RCA Analysis (Optional)", ["None"] + list(rca_map.keys()))
+                
+                f_prob = st.text_area("Problem Statement")
+                f_evid = st.text_area("Evidence Statement")
+                
+                m_val = st.number_input("Metric Value")
+                
+                f_type = st.selectbox("Interpretation Type", ["ANALYST_HYPOTHESIS", "ANALYST_CONCLUSION"])
+                f_interp = st.text_area("Analyst Interpretation")
+                f_impact = st.text_area("Impact")
+                f_rec = st.text_area("Recommendation")
+                
+                save_f = st.form_submit_button("Save Finding")
+                
+        with c2:
+            if save_f:
+                try:
+                    fdef = FindingDefinition(
+                        finding_id=f_id,
+                        linked_business_question_id=None,
+                        linked_kpi_id=kpi_map.get(f_kpi, ""),
+                        linked_rca_analysis_id=f_rca if f_rca != "None" else None,
+                        problem=f_prob,
+                        evidence_statement=f_evid,
+                        metric_value=m_val,
+                        comparison_value=None,
+                        comparison_context="",
+                        system_generated_association="Manually authored finding.",
+                        analyst_interpretation=f_interp,
+                        interpretation_type=f_type,
+                        impact=f_impact,
+                        recommendation=f_rec,
+                        created_at=time.time(),
+                        updated_at=time.time()
+                    )
+                    find_eng.save_finding(fdef)
+                    st.success("Finding Saved!")
+                except Exception as e:
+                    st.error(f"Error saving finding: {e}")
+                    
+        st.markdown("#### Saved Findings")
+        for f in find_eng.load_findings():
+            if not getattr(f, 'is_archived', False):
+                with st.expander(f"{f.finding_id}: {f.problem}"):
+                    st.write(f"**Evidence:** {f.evidence_statement}")
+                    st.write(f"**System Association:** {f.system_generated_association}")
+                    st.write(f"**{f.interpretation_type}:** {f.analyst_interpretation}")
+                    st.write(f"**Impact:** {f.impact}")
+                    st.write(f"**Recommendation:** {f.recommendation}")
+                    if st.button("Archive", key=f"arch_{f.finding_id}"):
+                        find_eng.archive_finding(f.finding_id)
+                        st.rerun()
+
 
 if not st.session_state.analysis_results:
     if workflow_mode != "Project Workspace":
