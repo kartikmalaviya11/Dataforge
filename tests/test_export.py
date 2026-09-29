@@ -131,7 +131,7 @@ def test_empty_datasets(export_service):
 
 def test_integration_full_flow():
     # Test Q
-    from app import run_pipeline
+    from src.pipeline import run_pipeline
     import streamlit as st
     from unittest.mock import patch, MagicMock
     import tempfile

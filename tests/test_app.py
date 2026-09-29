@@ -2,7 +2,7 @@ import pytest
 import os
 from pathlib import Path
 import collections
-from app import run_pipeline
+from src.pipeline import run_pipeline
 
 def test_app_pipeline_execution(tmp_path):
     """Test that the app.py backend pipeline runs successfully on a valid dataset."""
@@ -36,7 +36,7 @@ def test_app_pipeline_execution(tmp_path):
     assert err == ""
 
 def test_validate_default_cols():
-    from app import validate_default_cols
+    from src.pipeline import validate_default_cols
     import pandas as pd
     
     # 1. Default column exists

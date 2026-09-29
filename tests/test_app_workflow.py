@@ -1,135 +1,140 @@
 import pytest
-import os
-from pathlib import Path
-import collections
 from streamlit.testing.v1 import AppTest
+from src.workspace import ProjectWorkspace
+import pandas as pd
+from unittest.mock import patch, MagicMock
+from pathlib import Path
 
 def test_streamlit_initial_state():
-    """Test A: Fresh upload clears state / App initializes correctly"""
-    at = AppTest.from_file("../app.py", default_timeout=30)
+    at = AppTest.from_file("../app.py", default_timeout=60)
     at.run()
     assert not at.exception
-    assert at.session_state.analysis_results is None
+    assert at.session_state.current_page == "Project Setup"
     
 def test_streamlit_workflow_mocked(tmp_path):
-    """Test the tabs and interactions using a mock session state."""
-    at = AppTest.from_file("../app.py", default_timeout=30)
-    
-    # We must populate session_state manually to avoid long processing time 
-    # during UI tests and to avoid upload widget limitations in AppTest
-    import pandas as pd
-    from src.ingestion import DatasetProfile
-    from src.proposal_generator import RepairProposal, ApprovalState
-    from src.issue_manager import StandardizedIssue, IssueClassification
-    from src.revalidation import ValidationSnapshot
-    
-    df = pd.DataFrame({"A": [1, 2], "B": ["x", "y"]})
-    
-    # Mock some data
-    mock_issues = [
-        StandardizedIssue("ID1", "SOURCE", "DUPLICATE_ROW", "Duplicate Check", 0, "A", "val", "No duplicate", "CRITICAL", "Msg", "Rec")
-    ]
-    mock_issues[0].classification = IssueClassification.AUTO_FIXABLE
-    
-    mock_proposals = [
-        RepairProposal("P1", "ID1", 0, "A", 1, None, "DROP_ROW", "Drop row", IssueClassification.AUTO_FIXABLE)
-    ]
-    
-    # Run the app first to initialize state
+    at = AppTest.from_file("../app.py", default_timeout=60)
     at.run()
     
-    # Inject state
-    class MockReadiness:
-        overall_score = 85.0
-        dimension_scores = {"A": 100}
-        
-    class MockProfile:
-        row_count = 100
-        column_count = 5
-        column_names = ["A", "B"]
-        
-    class MockColProfile:
-        name = "A"
-        null_count = 0
-        null_percentage = 0.0
-        unique_percentage = 100.0
-        
-    class MockTypeResult:
-        column_name = "A"
-        storage_type = "int64"
-        detected_type = "Numeric"
-        confidence = 1.0
-        status = "MATCH"
-        
-    class MockKPI:
-        kpi_name = "K1"
-        category = "C1"
-        priority = "High"
-        status = "AVAILABLE"
-        calculation_logic = "L1"
-        explanation = "E1"
-        required_columns = ["A"]
-        available_columns = ["A"]
-        
-    class MockDAX:
-        measure_name = "M1"
-        kpi_name = "K1"
-        status = "AVAILABLE"
-        dax_expression = "DAX1"
-        
-    class MockSQL:
-        query_name = "Q1"
-        python_result = 1
-        sql_result = 1
-        difference = 0
-        match_status = "MATCH"
-        sql = "SELECT 1"
-
-    # Create dummy report
-    dummy_report = tmp_path / "report_dummy.csv"
-    dummy_report.write_text("dummy,data\n1,2", encoding="utf-8")
-
+    ws = ProjectWorkspace(tmp_path)
+    df = pd.DataFrame({'id': [1,2,2], 'price': [10.0, 20.0, 20.0]})
+    df.to_csv(tmp_path / 'sales.csv', index=False)
+    ws.discover_datasets()
+    
+    at.session_state.workspace = ws
     at.session_state.analysis_results = {
-        "df": df,
-        "profile": MockProfile(),
-        "col_profiles": [MockColProfile()],
-        "type_results": [MockTypeResult()],
-        "all_issues": mock_issues,
-        "proposals": mock_proposals,
-        "readiness": MockReadiness(),
-        "kpis": [MockKPI()],
-        "dax": [MockDAX()],
-        "sql_results": [MockSQL()],
-        "out_dir": tmp_path,
-        "filename": "test.csv",
-        "raw_bytes": b"mock",
-        "filesize": 100,
-        "elapsed": 1.0,
-        "before_snapshot": ValidationSnapshot(mock_issues, MockReadiness(), [MockColProfile()], [MockTypeResult()]),
-        "repaired_df": None,
-        "repair_results": None,
-        "after_snapshot": None,
-        "comparison_result": None
+        'df': df,
+        'filename': 'sales.csv'
     }
     
+    pages = [
+        "Overview", "Data Quality", "Issues", "Cleaning", "Validation",
+        "Relationships", "Feature Engineering", "SQL Workspace",
+        "KPI Center", "Business Questions", "Segmentation", "Anomaly Detection",
+        "Date Analysis", "RCA", "Findings",
+        "Power BI Model", "Advanced DAX", "Dashboard Blueprint", "Insight Visuals",
+        "Data Lineage", "Run History", "Dataset Versions", "Readiness", "Assumptions",
+        "Business Impact", "Documentation", "Export Package", "Domain Templates"
+    ]
+    
+    for page in pages:
+        at.session_state.current_page = page
+        at.run()
+        assert not at.exception, f"Exception occurred on page {page}"
+
+def test_e2e_button_actions(tmp_path):
+    ws = ProjectWorkspace(tmp_path)
+    df = pd.DataFrame({'id': [1,2,2], 'price': [10.0, 20.0, 20.0], 'category': ['A ', 'B', None], 'created_at': ['2023-01-01', '2023-01-02', '2023-01-03']})
+    df.to_csv(tmp_path / 'sales.csv', index=False)
+    ws.discover_datasets()
+    from src.workspace import TableStatus
+    ws.registry['sales'].status = TableStatus.ANALYZED
+    
+    at = AppTest.from_file("../app.py", default_timeout=60)
     at.run()
-    assert not at.exception
+    at.session_state.workspace = ws
     
-    # Tab 0: Overview
-    assert "Overview Summary" in at.markdown[4].value
+    from src.pipeline import run_pipeline
+    class MockFile:
+        def __init__(self, c): self._c = c; self.name = 'sales.csv'; self.size=len(c)
+        def getvalue(self): return self._c
+    with open(tmp_path / 'sales.csv', 'rb') as f:
+        mf = MockFile(f.read())
+    import streamlit as st
+    with patch('src.pipeline.st') as mock_st:
+        mock_st.session_state = MagicMock()
+        mock_st.session_state.workspace = ws
+        run_pipeline(mf, None)
+        res = mock_st.session_state.analysis_results
+        at.session_state.analysis_results = res
     
-    # Let's try to click "Approve All AUTO_FIXABLE" on the Suggested Fixes tab
-    # It's a button.
-    approve_button = [btn for btn in at.button if btn.label == "Approve All AUTO_FIXABLE"]
-    if approve_button:
-        approve_button[0].click()
-        at.run()
-        # Verify state updated
-        assert at.session_state.analysis_results["proposals"][0].approval_state == ApprovalState.APPROVED
+    action_matrix = [
+        ('Overview', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Data Quality', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Issues', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Cleaning', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Cleaning', 'Approve Safe Fixes', None, lambda at: assert_success(at, "Repairs applied")), 
+        ('Validation', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Relationships', 'Detect Relationships', None, lambda at: assert_success(at, "Detected candidates")), 
+        ('Feature Engineering', 'Create', lambda at: at.text_input(key="fe_name").set_value("new_feat").run(), lambda at: assert_success(at, "Feature created")), 
+        ('SQL Workspace', 'Run', lambda at: at.text_area[0].set_value("SELECT * FROM sales LIMIT 5").run(), lambda at: assert_dataframe(at)), 
+        ('KPI Center', 'Generate KPIs', None, lambda at: assert_success(at, "KPIs generated")), 
+        ('Business Questions', 'Auto Generate', None, lambda at: assert_success(at, "Generated.")), 
+        ('Segmentation', 'Auto Segment', None, lambda at: assert_success(at, "Segments generated")), 
+        ('Anomaly Detection', 'Detect Outliers', None, lambda at: assert_success(at, "Analysis saved")), 
+        ('Date Analysis', 'Generate Date Table', None, lambda at: assert_success(at, "Date table generated")), 
+        ('RCA', 'Run Example RCA', None, lambda at: assert_success(at, "Executed RCA")), 
+        ('Findings', 'Create Dummy Finding', None, lambda at: assert_success(at, "Saved.")), 
+        ('Power BI Model', 'Generate Model', None, lambda at: assert_success(at, "Model Generated!")), 
+        ('Data Lineage', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Advanced DAX', 'Generate DAX', None, lambda at: assert_success(at, "DAX Generated!")), 
+        ('Dashboard Blueprint', 'Generate Blueprint', None, lambda at: assert_success(at, "Blueprint Generated")), 
+        ('Insight Visuals', 'Generate Mapping', None, lambda at: assert_success(at, "Mapping Generated")), 
+        ('Run History', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Dataset Versions', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Readiness', 'NAVIGATION/INFORMATION ACTION', None, None), 
+        ('Assumptions', 'Register Assumption', None, lambda at: assert_success(at, "Registered")), 
+        ('Business Impact', 'Map Impact', None, lambda at: assert_success(at, "Impact Mapped")), 
+        ('Documentation', 'Generate All Docs', None, lambda at: assert_success(at, "Documentation Generated")), 
+        ('Export Package', 'Build Export Package', None, lambda at: assert_success(at, "Exported")), 
+        ('Domain Templates', 'Apply Template', None, lambda at: assert_success(at, "Loaded")), 
+    ]
+    
+    def assert_success(at, expected_text):
+        successes = [s.value for s in at.success]
+        assert any(expected_text.lower() in s.lower() for s in successes), f"Expected success message containing '{expected_text}', got: {successes}"
         
-    # Let's try to click Analyze New
-    analyze_new_btn = [btn for btn in at.button if btn.label == "Analyze New"]
-    if analyze_new_btn:
-        analyze_new_btn[0].click()
+    def assert_dataframe(at):
+        assert len(at.dataframe) > 0, "Expected a dataframe in the output"
+    
+    for page, button_label, setup_fn, verify_fn in action_matrix:
+        at.session_state.current_page = page
         at.run()
-        assert at.session_state.analysis_results is None
+        assert not at.exception, f"Exception during render of page '{page}': {at.exception}"
+        
+        if button_label == 'NAVIGATION/INFORMATION ACTION':
+            continue
+            
+        clicked = False
+        for btn in at.button:
+            if btn.label == button_label:
+                if setup_fn:
+                    setup_fn(at)
+                    
+                btn.click().run()
+                assert not at.exception, f"Exception during action '{button_label}' on page '{page}': {at.exception}"
+                
+                errs = [e.value for e in at.error]
+                assert not errs, f"Action '{button_label}' produced errors: {errs}"
+                
+                warns = [w.value for w in at.warning]
+                assert not warns, f"Action '{button_label}' produced warnings: {warns}"
+                
+                if verify_fn:
+                    verify_fn(at)
+                    
+                clicked = True
+                break
+                
+        if not clicked:
+            print(f"AVAILABLE BUTTONS ON {page}:", [b.label for b in at.button])
+        assert clicked, f"Button '{button_label}' not found on page '{page}'"

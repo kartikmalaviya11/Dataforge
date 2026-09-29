@@ -159,7 +159,7 @@ def test_stable_issue_matching(reval_engine, repair_engine):
 
 def test_streamlit_state_integration():
     # Test I
-    from app import run_pipeline
+    from src.pipeline import run_pipeline
     import streamlit as st
     from unittest.mock import patch, MagicMock
     import tempfile
