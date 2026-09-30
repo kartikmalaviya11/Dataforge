@@ -2,7 +2,7 @@ import streamlit as st
 from ui.theme import apply_theme
 from ui.layout import render_sidebar, render_global_header
 from ui.pages.project import (
-    render_project_setup, render_overview, render_data_quality, 
+    render_overview, render_data_import, render_data_quality, 
     render_issues, render_cleaning, render_validation
 )
 from ui.pages.analysis import (
@@ -29,8 +29,8 @@ apply_theme()
 current_page = render_sidebar()
 
 # Main Content Routing
-if current_page == "Project Setup":
-    render_project_setup()
+if current_page == "Data Import":
+    render_data_import()
 else:
     if "workspace" in st.session_state:
         ws = st.session_state.workspace

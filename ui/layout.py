@@ -1,70 +1,111 @@
 import streamlit as st
+import json
 from pathlib import Path
 from src.workspace import ProjectWorkspace
-from ui.theme import badge, metric_card
+from ui.theme import badge, metric_card, logo_html, card
 
 def init_navigation():
     if "current_page" not in st.session_state:
-        st.session_state.current_page = "Project Setup"
+        st.session_state.current_page = "Data Import"
 
-def nav_button(label: str):
+def nav_button(label: str, disabled: bool = False):
     is_active = st.session_state.current_page == label
     if is_active:
-        st.sidebar.markdown(f"**> {label}**")
+        st.sidebar.markdown(f"""
+        <div style="
+            border-left: 3px solid var(--primary); 
+            background-color: rgba(255,255,255,0.1); 
+            padding: 0.5rem 1rem; 
+            margin: 0; 
+            color: #FFFFFF; 
+            font-weight: 600; 
+            border-radius: 0 4px 4px 0;
+            font-size: 0.9rem;
+        ">{label}</div>
+        """, unsafe_allow_html=True)
     else:
-        if st.sidebar.button(label, key=f"nav_btn_{label}", use_container_width=True):
-            st.session_state.current_page = label
-            st.rerun()
+        if disabled:
+            lock_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>'''
+            st.sidebar.markdown(f"""
+            <div style="
+                padding: 0.5rem 1rem; 
+                margin: 0; 
+                color: #64748B; 
+                font-weight: 400;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                font-size: 0.9rem;
+                border-left: 3px solid transparent;
+            ">{label} {lock_svg}</div>
+            """, unsafe_allow_html=True)
+        else:
+            if st.sidebar.button(label, key=f"nav_btn_{label}", use_container_width=True):
+                st.session_state.current_page = label
+                st.rerun()
 
 def render_sidebar():
     init_navigation()
-    st.sidebar.markdown("## 📊 DATAFORGE")
     
-    # Project Setup
-    st.sidebar.markdown("---")
-    if "workspace" not in st.session_state:
-        nav_button("Project Setup")
-        return st.session_state.current_page
+    st.sidebar.markdown(logo_html(), unsafe_allow_html=True)
+    
+    workspace_loaded = "workspace" in st.session_state
+    
+    nav_button("Data Import", disabled=False)
         
-    st.sidebar.markdown("<small style='color:gray'>PROJECT</small>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'>PROJECT</div>", unsafe_allow_html=True)
     for p in ["Overview", "Data Quality", "Issues", "Cleaning", "Validation"]:
-        nav_button(p)
+        nav_button(p, disabled=not workspace_loaded)
         
-    st.sidebar.markdown("<small style='color:gray'>ANALYSIS</small>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'>ANALYSIS</div>", unsafe_allow_html=True)
     for p in ["Relationships", "Feature Engineering", "SQL Workspace", "Pandas Analysis", 
               "KPI Center", "Business Questions", "Segmentation", "Anomaly Detection", 
               "Date Analysis", "RCA", "Findings", "Recommendations"]:
-        nav_button(p)
+        nav_button(p, disabled=not workspace_loaded)
 
-    st.sidebar.markdown("<small style='color:gray'>BI</small>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'>BI</div>", unsafe_allow_html=True)
     for p in ["Power BI Model", "Advanced DAX", "Dashboard Blueprint", "Insight Visuals", "Data Lineage"]:
-        nav_button(p)
+        nav_button(p, disabled=not workspace_loaded)
 
-    st.sidebar.markdown("<small style='color:gray'>GOVERNANCE</small>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'>GOVERNANCE</div>", unsafe_allow_html=True)
     for p in ["Run History", "Dataset Versions", "Readiness", "Assumptions", 
               "Business Impact", "Documentation", "Export Package"]:
-        nav_button(p)
+        nav_button(p, disabled=not workspace_loaded)
 
-    st.sidebar.markdown("<small style='color:gray'>TOOLS</small>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'>TOOLS</div>", unsafe_allow_html=True)
     for p in ["Domain Templates", "Settings"]:
-        nav_button(p)
+        nav_button(p, disabled=not workspace_loaded)
 
     return st.session_state.current_page
 
 def render_global_header(ws: ProjectWorkspace):
     tables = len(ws.registry) if ws.registry else 0
     
-    st.markdown(f"### Project: {ws.project_root.name}")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.markdown(f"**Tables:** {tables}")
-    with col2:
-        st.markdown(f"**Quality:** {badge('TBD', 'neutral')}", unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"**Relationships:** {badge('TBD', 'neutral')}", unsafe_allow_html=True)
-    with col4:
-        st.markdown(f"**Findings:** {badge('TBD', 'neutral')}", unsafe_allow_html=True)
-    with col5:
-        st.markdown(f"**Readiness:** {badge('TBD', 'neutral')}", unsafe_allow_html=True)
+    # Calculate global status
+    status_text = "Ready"
+    status_level = "success"
     
-    st.markdown("---")
+    if st.session_state.get("analysis_results"):
+        issues = st.session_state.analysis_results.get("issues", [])
+        if any(i.severity == "ERROR" for i in issues):
+            status_text = "Blocked"
+            status_level = "error"
+        elif any(i.severity == "WARNING" for i in issues):
+            status_text = "Needs Review"
+            status_level = "warning"
+    elif tables == 0:
+        status_text = "Not Initialized"
+        status_level = "neutral"
+        
+    st.markdown(f"""
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1.5rem;">
+        <div>
+            <h3 style="margin: 0; padding: 0;">{ws.project_root.name}</h3>
+            <span style="color: var(--text-secondary); font-size: 0.85rem;">Project Workspace</span>
+        </div>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <div style="font-size: 0.85rem;"><span style="color: var(--text-secondary); margin-right: 0.5rem;">State:</span>{badge(status_text, status_level)}</div>
+            <div style="font-size: 0.85rem;"><span style="color: var(--text-secondary); margin-right: 0.25rem;">Tables:</span> <b>{tables}</b></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
