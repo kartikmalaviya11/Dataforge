@@ -107,3 +107,8 @@ else:
             st.info(f"Page '{current_page}' is under construction.")
     else:
         st.warning("Please load a project first in 'Project Setup'.")
+
+
+from ui.components import clear_operation
+if getattr(st.session_state, 'project_initialized', False):
+    clear_operation()
