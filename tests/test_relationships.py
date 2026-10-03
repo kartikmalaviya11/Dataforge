@@ -115,3 +115,22 @@ def test_er_generator():
     assert "orders" in dot
     assert "customers" in dot
     assert "customer_id" in dot
+
+def test_single_table_empty():
+    detector = RelationshipDetector()
+    candidates = detector.detect({"single": pd.DataFrame({'a': [1,2,3]})})
+    assert len(candidates) == 0
+
+def test_datatype_mismatch():
+    df1 = pd.DataFrame({'pk': [1,2,3]})
+    df2 = pd.DataFrame({'fk': ["1","2","3"]})
+    detector = RelationshipDetector()
+    candidates = detector.detect({"t1": df1, "t2": df2})
+    assert len(candidates) == 0
+
+def test_null_heavy_columns():
+    df1 = pd.DataFrame({'pk': [1, 2, 3, None, None, None]})
+    df2 = pd.DataFrame({'fk': [1, None, None, None, None, None]})
+    detector = RelationshipDetector()
+    candidates = detector.detect({"t1": df1, "t2": df2})
+    assert len(candidates) == 1

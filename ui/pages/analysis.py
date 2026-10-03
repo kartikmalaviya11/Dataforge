@@ -6,21 +6,34 @@ from ui.theme import badge
 
 def render_relationships(ws: ProjectWorkspace):
     st.markdown("## Relationships")
-    if dataforge_button("Detect Relationships", type="primary"):
-        def _do_action():
-            with st.spinner("Analyzing tables..."):
-                from src.relationship_engine import RelationshipDetector
-                detector = RelationshipDetector()
-                tables = {}
-                for tname in ws.registry.keys():
-                    df, _ = ws.load_table(tname)
-                    tables[tname] = df
-                st.session_state.relationship_candidates = detector.detect(tables)
-                st.success("Detected candidates.")
 
+    if len(ws.registry) < 2:
+        empty_state(
+            title="No cross-table relationships found",
+            description="Relationship detection requires multiple tables. Your project currently has only 1 table.",
+            action_label="Upload More Data",
+            target_page="Data Import"
+        )
+        return
+
+    if dataforge_button("Detect Relationships", type="primary"):
+        tables_cache = {}
+        def _load_tables():
+            for tname in ws.registry.keys():
+                df, _ = ws.load_table(tname)
+                tables_cache[tname] = df
+
+        def _detect():
+            from src.relationship_engine import RelationshipDetector
+            detector = RelationshipDetector()
+            st.session_state.relationship_candidates = detector.detect(tables_cache)
 
         from ui.components import run_action
-        run_action("Detect Relationships", [("Executing", _do_action)])
+        run_action("Detect Relationships", [
+            ("Loading tables...", _load_tables),
+            ("Detecting candidates...", _detect)
+        ])
+
     if "relationship_candidates" in st.session_state:
         candidates = st.session_state.relationship_candidates
         if not candidates:
@@ -48,7 +61,7 @@ def render_feature_engineering(ws: ProjectWorkspace):
         st.dataframe(pd.DataFrame([f.__dict__ for f in features]))
     else:
         st.info("No features defined.")
-        
+
     st.markdown("### Create Feature")
     target_table = st.selectbox("Target Table", list(ws.registry.keys()), key="fe_table")
     feature_name = st.text_input("Feature Name", key="fe_name")
@@ -71,7 +84,7 @@ def render_feature_engineering(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Create", [("Executing", _do_action)])
+        run_action("Create Feature", [("Generating code...", _do_action)])
 def render_sql_workspace(ws: ProjectWorkspace):
     st.markdown("## SQL Workspace")
     from src.sql_engine import DuckDBEngine
@@ -88,7 +101,7 @@ def render_sql_workspace(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Run", [("Executing", _do_action)])
+        run_action("Run Query", [("Executing query...", _do_action)])
 def render_pandas_analysis(ws: ProjectWorkspace):
     st.markdown("## Pandas Analysis")
     st.info("Select a table to analyze.")
@@ -100,7 +113,7 @@ def render_pandas_analysis(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Describe", [("Executing", _do_action)])
+        run_action("Describe Table", [("Profiling table...", _do_action)])
 def render_kpi_center(ws: ProjectWorkspace):
     st.markdown("## KPI Center")
     if dataforge_button("Generate KPIs", type="primary"):
@@ -114,7 +127,7 @@ def render_kpi_center(ws: ProjectWorkspace):
             st.success("KPIs generated.")
 
         from ui.components import run_action
-        run_action("Generate KPIs", [("Executing", _do_action)])
+        run_action("Generate KPIs", [("Synthesizing metrics...", _do_action)])
     if "kpis" in st.session_state:
         st.dataframe(pd.DataFrame([__import__("dataclasses").asdict(k) for k in st.session_state.kpis]))
 
@@ -130,7 +143,7 @@ def render_business_questions(ws: ProjectWorkspace):
         st.dataframe(pd.DataFrame([q.dict() for q in active]))
     else:
         st.info("No active questions.")
-        
+
     if dataforge_button("Auto Generate", type="primary"):
         def _do_action():
             try:
@@ -142,7 +155,7 @@ def render_business_questions(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Auto Generate", [("Executing", _do_action)])
+        run_action("Auto Generate Questions", [("Generating questions...", _do_action)])
 def render_segmentation(ws: ProjectWorkspace):
     st.markdown("## Segmentation")
     target_table = st.selectbox("Target Table", list(ws.registry.keys()), key="seg_table")
@@ -161,7 +174,7 @@ def render_segmentation(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Auto Segment", [("Executing", _do_action)])
+        run_action("Auto Segment", [("Clustering data points...", _do_action)])
 def render_anomaly_detection(ws: ProjectWorkspace):
     st.markdown("## Anomaly Detection")
     target_table = st.selectbox("Target Table", list(ws.registry.keys()), key="anom_table")
@@ -180,7 +193,7 @@ def render_anomaly_detection(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Detect Outliers", [("Executing", _do_action)])
+        run_action("Detect Outliers", [("Scanning data for anomalies...", _do_action)])
 def render_date_analysis(ws: ProjectWorkspace):
     st.markdown("## Date Analysis")
     if dataforge_button("Generate Date Table", type="primary"):
@@ -197,7 +210,7 @@ def render_date_analysis(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Generate Date Table", [("Executing", _do_action)])
+        run_action("Generate Date Table", [("Building date dimension...", _do_action)])
 def render_rca(ws: ProjectWorkspace):
     st.markdown("## Root Cause Analysis")
     if dataforge_button("Run Example RCA", type="primary"):
@@ -214,7 +227,7 @@ def render_rca(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Run Example RCA", [("Executing", _do_action)])
+        run_action("Run Example RCA", [("Analyzing root causes...", _do_action)])
 def render_findings(ws: ProjectWorkspace):
     st.markdown("## Findings")
     from src.finding_engine import FindingEngine, FindingDefinition
@@ -231,7 +244,7 @@ def render_findings(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("Create Dummy Finding", [("Executing", _do_action)])
+        run_action("Create Dummy Finding", [("Saving finding...", _do_action)])
 def render_recommendations(ws: ProjectWorkspace):
     st.markdown("## Recommendations")
     if dataforge_button("View Recommendations"):
@@ -248,4 +261,4 @@ def render_recommendations(ws: ProjectWorkspace):
 
 
         from ui.components import run_action
-        run_action("View Recommendations", [("Executing", _do_action)])
+        run_action("View Recommendations", [("Fetching recommendations...", _do_action)])

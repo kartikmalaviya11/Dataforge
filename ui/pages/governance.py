@@ -40,8 +40,7 @@ def render_assumptions(ws: ProjectWorkspace):
         def _do_action():
             st.success("Registered")
 
-        from ui.components import run_action
-        run_action("Register Assumption", [("Executing", _do_action)])
+        run_action("Register Assumption", [("Registering assumption...", _do_action)])
     st.markdown("## Assumptions Register")
     from src.assumption_register import AssumptionRegisterManager
     ar = AssumptionRegisterManager(ws.project_root)
@@ -59,8 +58,7 @@ def render_business_impact(ws: ProjectWorkspace):
         def _do_action():
             st.success("Impact Mapped")
 
-        from ui.components import run_action
-        run_action("Map Impact", [("Executing", _do_action)])
+        run_action("Map Impact", [("Mapping business impact...", _do_action)])
     st.markdown("## Business Impact")
     from src.business_impact import BusinessImpactManager
     bim = BusinessImpactManager(ws.project_root)
@@ -83,8 +81,7 @@ def render_documentation(ws: ProjectWorkspace):
             st.success("Documentation Generated in `.dataforge/docs/`")
 
 
-        from ui.components import run_action
-        run_action("Generate All Docs", [("Executing", _do_action)])
+        run_action("Generate All Docs", [("Compiling project documentation...", _do_action)])
 def render_export_package(ws: ProjectWorkspace):
     st.markdown("## Export Package")
     if dataforge_button("Build Export Package", type="primary"):
@@ -96,5 +93,4 @@ def render_export_package(ws: ProjectWorkspace):
 
 
 
-        from ui.components import run_action
-        run_action("Build Export Package", [("Executing", _do_action)])
+        run_action("Build Export Package", [("Bundling export package...", _do_action)])

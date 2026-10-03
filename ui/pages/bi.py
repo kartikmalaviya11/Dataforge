@@ -17,8 +17,7 @@ def render_power_bi_model(ws: ProjectWorkspace):
             st.success("Model Generated!")
         
 
-        from ui.components import run_action
-        run_action("Generate Model", [("Executing", _do_action)])
+        run_action("Generate Model", [("Generating semantic model...", _do_action)])
     if "pbimodel" in st.session_state:
         st.write(st.session_state.pbimodel)
 
@@ -40,8 +39,7 @@ def render_advanced_dax(ws: ProjectWorkspace):
                 st.warning("Generate KPIs first.")
             
 
-        from ui.components import run_action
-        run_action("Generate DAX", [("Executing", _do_action)])
+        run_action("Generate DAX", [("Generating DAX measures...", _do_action)])
     if "dax_measures" in st.session_state:
         dax_df = pd.DataFrame([{
             "Measure": d.measure_name, "KPI": d.kpi_name, "Status": d.status, "DAX Expression": d.dax_expression
@@ -67,8 +65,7 @@ def render_dashboard_blueprint(ws: ProjectWorkspace):
                 st.error(f"Error: {e}")
             
 
-        from ui.components import run_action
-        run_action("Generate Blueprint", [("Executing", _do_action)])
+        run_action("Generate Blueprint", [("Architecting dashboard blueprint...", _do_action)])
     if "dashboard_blueprint" in st.session_state:
         st.write(st.session_state.dashboard_blueprint)
 

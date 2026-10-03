@@ -32,6 +32,7 @@ def run_action(operation_name, steps, result_key=None):
     
     import time
     t_start = time.time()
+    res = None
     
     try:
         with st.status(f"Running {operation_name}...") as status:
@@ -46,7 +47,6 @@ def run_action(operation_name, steps, result_key=None):
         t_end = time.time()
         print(f"[{operation_name}] total={t_end - t_start:.4f}s")
         
-        clear_operation()
         if result_key and hasattr(st.session_state, result_key):
             return True, getattr(st.session_state, result_key)
         return True, res
@@ -55,5 +55,6 @@ def run_action(operation_name, steps, result_key=None):
         with st.expander("Show Technical Details"):
             import traceback
             st.code(traceback.format_exc(), language="python")
-        clear_operation()
         return False, str(e)
+    finally:
+        clear_operation()

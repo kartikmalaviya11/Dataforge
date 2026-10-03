@@ -32,10 +32,10 @@ def apply_theme():
         }
         
         /* Typography overrides */
-        h1, h2, h3, h4, h5, h6 {
-            color: var(--text-main) !important;
-            font-weight: 600 !important;
-        }
+        h1 { font-size: 2.25rem !important; font-weight: 700 !important; color: var(--text-main) !important; letter-spacing: -0.02em; }
+        h2 { font-size: 1.75rem !important; font-weight: 600 !important; color: var(--text-main) !important; margin-top: 1.5rem !important; }
+        h3 { font-size: 1.25rem !important; font-weight: 600 !important; color: var(--text-main) !important; }
+        p { line-height: 1.6; color: var(--text-secondary); }
 
         /* Sidebar Styling */
         [data-testid="stSidebar"] {
@@ -57,11 +57,12 @@ def apply_theme():
             box-shadow: none !important;
             text-align: left !important;
             justify-content: flex-start !important;
-            padding: 0.5rem 1rem !important;
-            font-weight: 400 !important;
+            padding: 0.6rem 1rem !important;
+            font-weight: 500 !important;
             border-radius: 0 4px 4px 0 !important;
             border-left: 3px solid transparent !important;
             margin: 0 !important;
+            transition: all 0.2s ease;
         }
         [data-testid="stSidebar"] .stButton > button:hover {
             background-color: rgba(255,255,255,0.05) !important;
@@ -75,9 +76,9 @@ def apply_theme():
             font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            font-weight: 600;
-            margin-top: 1.5rem;
-            margin-bottom: 0.5rem;
+            font-weight: 700;
+            margin-top: 2rem;
+            margin-bottom: 0.75rem;
             padding-left: 1rem;
         }
 
@@ -85,10 +86,11 @@ def apply_theme():
         .df-card {
             background-color: var(--card-bg);
             border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 1.25rem;
-            box-shadow: none;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
             margin-bottom: 1rem;
+            transition: transform 0.2s ease;
         }
         
         /* Metric block */
@@ -97,37 +99,46 @@ def apply_theme():
             color: var(--text-secondary);
             text-transform: uppercase;
             letter-spacing: 0.02em;
-            margin-bottom: 0.25rem;
-            font-weight: 500;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
         }
         .df-metric-value {
-            font-size: 1.5rem;
-            font-weight: 600;
+            font-size: 1.75rem;
+            font-weight: 700;
             color: var(--text-main);
+            letter-spacing: -0.01em;
         }
         
         /* Main Buttons */
         .stButton>button {
             border-radius: 6px;
             font-weight: 500;
-            transition: all 0.2s ease;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             border: 1px solid var(--border);
             background-color: var(--card-bg);
             color: var(--text-main);
+            padding: 0.5rem 1rem;
         }
         .stButton>button:hover {
             border-color: var(--text-secondary);
             color: var(--text-main);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            transform: translateY(-1px);
+        }
+        .stButton>button:active {
+            transform: translateY(0);
         }
         .stButton>button[kind="primary"] {
             background-color: var(--primary);
             color: white;
             border: 1px solid var(--primary);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
         }
         .stButton>button[kind="primary"]:hover {
             background-color: #1e40af; /* darker blue */
             border-color: #1e40af;
             color: white;
+            box-shadow: 0 4px 6px -1px rgba(29, 78, 216, 0.2), 0 2px 4px -1px rgba(29, 78, 216, 0.1);
         }
         
         /* Tables */

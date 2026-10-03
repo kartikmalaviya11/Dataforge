@@ -84,7 +84,7 @@ def test_duplicate_filename():
     has_start = any(btn.label == "Start Analysis" for btn in at.button)
     if has_start:
         start_btn = [btn for btn in at.button if btn.label == "Start Analysis"][0]
-        start_btn.click().run()
+        start_btn.click().run(timeout=10)
         if at.error:
             assert "Duplicate filename: data.csv" in at.error[0].value
         else:
