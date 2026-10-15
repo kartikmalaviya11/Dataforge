@@ -112,8 +112,6 @@ Dataforge/
 ├── pyproject.toml             # Project configuration and dependencies
 ├── requirements.txt           # Python package requirements
 ├── README.md                  # Documentation and setup guide
-├── FINAL_RELEASE_AUDIT.md     # Release gate audit report
-├── GITHUB_SYNC_DIAGNOSIS.md   # Local/remote git synchronization diagnosis
 ├── config/
 │   └── rules.yaml             # Configurable business quality rules
 ├── docs/
@@ -226,7 +224,7 @@ DATAFORGE maintains strict automated testing across unit, integration, property-
 ================ 574 passed, 159 warnings in 108.05s ================
 ```
 * **574 Passed, 0 Failed, 0 Errors.**
-* Warnings are verified non-blocking deprecations (`datetime.utcnow()` scheduled for Python 3.16+, intentional `dateutil` fallbacks, and Streamlit parameter renames).
+* `datetime.utcnow()` has been deprecated since Python 3.12. Python recommends timezone-aware UTC datetime values, such as `datetime.now(datetime.UTC)`. Other warnings in the recorded test run include date-parsing fallbacks and Streamlit parameter deprecations. See the official Python documentation: https://docs.python.org/3/library/datetime.html#datetime.datetime.utcnow.
 
 ### Run Playwright Browser Acceptance Suite
 ```powershell
