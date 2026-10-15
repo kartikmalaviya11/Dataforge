@@ -79,16 +79,16 @@ else:
             render_advanced_dax(ws)
         elif current_page == "Dashboard Blueprint":
             render_dashboard_blueprint(ws)
-        elif current_page == "Insight Visuals":
+        elif current_page == "Insight → Visual":
             render_insight_visuals(ws)
         elif current_page == "Data Lineage":
             render_data_lineage(ws)
             
         elif current_page == "Run History":
             render_run_history(ws)
-        elif current_page == "Dataset Versions":
+        elif current_page == "Dataset Versioning":
             render_dataset_versions(ws)
-        elif current_page == "Readiness":
+        elif current_page == "Historical Readiness":
             render_readiness(ws)
         elif current_page == "Assumptions":
             render_assumptions(ws)

@@ -310,3 +310,117 @@ class ModelGenerator:
                 warnings=warnings
             ))
         return measures
+
+    def generate_dax_measures(self, kpis: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Generates production Power BI DAX measures from real KPI definitions
+        and project DataModel metadata.
+        """
+        import re
+        target_kpis = kpis if kpis is not None else self.kpis
+        measures = []
+        if not target_kpis:
+            return measures
+
+        for k in target_kpis:
+            if isinstance(k, dict):
+                kpi_name = k.get("kpi_name") or k.get("name") or "Measure"
+                formula = k.get("formula") or k.get("calculation_logic") or ""
+                src_tables = k.get("source_tables") or []
+                src_cols = k.get("source_columns") or []
+                unit = k.get("unit") or ""
+            else:
+                kpi_name = getattr(k, "kpi_name", getattr(k, "name", "Measure"))
+                formula = getattr(k, "formula", getattr(k, "calculation_logic", ""))
+                src_tables = getattr(k, "source_tables", [])
+                src_cols = getattr(k, "source_columns", [])
+                unit = getattr(k, "unit", "")
+
+            # Resolve table from data_model
+            table_name = None
+            if src_tables and src_tables[0] in self.data_model.tables:
+                table_name = src_tables[0]
+            elif src_cols and self.data_model.tables:
+                for t_name, t_schema in self.data_model.tables.items():
+                    if any(c in t_schema.columns for c in src_cols):
+                        table_name = t_name
+                        break
+
+            if not table_name:
+                if self.data_model.tables:
+                    table_name = list(self.data_model.tables.keys())[0]
+                elif src_tables:
+                    table_name = src_tables[0]
+                else:
+                    table_name = "Dataset"
+
+            # Build DAX expression
+            def format_part(expr: str) -> str:
+                expr = expr.strip()
+                m = re.match(r"^([A-Za-z_]+)\((?:\[?([^\]\)]+)\]?)\)$", expr)
+                if m:
+                    func = m.group(1).upper()
+                    if func == "COUNT_DISTINCT":
+                        func = "DISTINCTCOUNT"
+                    col = m.group(2).strip()
+                    return f"{func}('{table_name}'[{col}])"
+                elif src_cols:
+                    return f"SUM('{table_name}'[{src_cols[0]}])"
+                return expr
+
+            if " / " in formula or ("/" in formula and not formula.startswith("/")):
+                parts = formula.split("/") if " / " not in formula else formula.split(" / ")
+                if len(parts) == 2:
+                    num = format_part(parts[0])
+                    den = format_part(parts[1])
+                    dax_expr = f"DIVIDE({num}, {den})"
+                else:
+                    dax_expr = format_part(formula)
+            elif formula:
+                dax_expr = format_part(formula)
+            elif src_cols:
+                dax_expr = f"SUM('{table_name}'[{src_cols[0]}])"
+            else:
+                dax_expr = f"COUNTROWS('{table_name}')"
+
+            # Format string
+            k_lower = kpi_name.lower()
+            u_lower = unit.lower() if unit else ""
+            if u_lower in ("percent", "%", "ratio") or any(w in k_lower for w in ("margin", "rate", "ratio", "percentage", "pct")) or "DIVIDE" in dax_expr:
+                format_str = "0.0%"
+            elif u_lower in ("currency", "usd", "$") or any(w in k_lower for w in ("sales", "revenue", "amount", "price", "cost", "profit")):
+                format_str = "$#,##0.00"
+            elif any(w in k_lower for w in ("count", "orders", "customers", "quantity", "qty")):
+                format_str = "#,##0"
+            else:
+                format_str = "#,##0.00"
+
+            ref_cols = [f"'{table_name}'[{c}]" for c in src_cols] if src_cols else []
+            measures.append({
+                "measure_name": kpi_name,
+                "kpi_name": kpi_name,
+                "table": table_name,
+                "dax_expression": dax_expr,
+                "format_string": format_str,
+                "status": "VALID",
+                "referenced_columns": ref_cols
+            })
+
+        return measures
+
+    @staticmethod
+    def save_dax_measures(measures: List[Dict[str, Any]], base_path: str = ".dataforge"):
+        import os, json
+        os.makedirs(base_path, exist_ok=True)
+        path = os.path.join(base_path, "dax_measures.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(measures, f, indent=2)
+
+    @staticmethod
+    def load_dax_measures(base_path: str = ".dataforge") -> List[Dict[str, Any]]:
+        import os, json
+        path = os.path.join(base_path, "dax_measures.json")
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)

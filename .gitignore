@@ -52,3 +52,9 @@ dist/
 
 # Ruff
 .ruff_cache/
+
+# Workspaces
+.dataforge_workspaces/
+
+# Scratch & temporary artifacts
+scratch/

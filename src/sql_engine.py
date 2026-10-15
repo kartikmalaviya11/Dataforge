@@ -139,7 +139,8 @@ class DuckDBEngine:
             
         # For SELECT/WITH, apply preview limit using DuckDB's fetchdf capability
         # By wrapping the query
-        sql_with_limit = f"SELECT * FROM ({sql}) AS _limited_preview LIMIT {self.preview_limit}"
+        clean_sql = sql.strip().rstrip(';').strip()
+        sql_with_limit = f"SELECT * FROM ({clean_sql}) AS _limited_preview LIMIT {self.preview_limit}"
         df = self.conn.execute(sql_with_limit).fetchdf()
         return df
 
@@ -155,8 +156,9 @@ class DuckDBEngine:
         export_file = exports_dir / f"export_{export_id}.csv"
         
         # Use DuckDB native COPY
+        clean_sql = sql.strip().rstrip(';').strip()
         safe_path = str(export_file).replace("'", "''")
-        copy_sql = f"COPY ({sql}) TO '{safe_path}' (HEADER, DELIMITER ',')"
+        copy_sql = f"COPY ({clean_sql}) TO '{safe_path}' (HEADER, DELIMITER ',')"
         
         self.conn.execute(copy_sql)
         return str(export_file)

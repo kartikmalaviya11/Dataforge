@@ -43,6 +43,14 @@ class AssumptionRegisterManager:
             json.dump(data, f, indent=2, sort_keys=True)
 
     def create(self, title: str, description: str, reason: str, risk: str, used_in: List[str]) -> str:
+        if not title or not title.strip():
+            raise ValueError("Assumption title cannot be empty.")
+        if not description or not description.strip():
+            raise ValueError("Assumption description cannot be empty.")
+        title = title.strip()
+        description = description.strip()
+        reason = reason.strip() if reason else ""
+        risk = risk.strip() if risk else "MEDIUM"
         a_id = hashlib.sha256(f"{title}_{description}".encode()).hexdigest()[:16]
         self.assumptions[a_id] = Assumption(
             assumption_id=a_id,
@@ -50,7 +58,7 @@ class AssumptionRegisterManager:
             description=description,
             reason=reason,
             risk=risk,
-            used_in=used_in,
+            used_in=used_in or [],
             created_at=datetime.utcnow().isoformat()
         )
         self.save()

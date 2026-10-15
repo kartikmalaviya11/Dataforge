@@ -46,11 +46,22 @@ class RCACondition:
         else: sql_op = "="
 
         if sql_op == "IN":
-            # value should be a list
-            vals = ", ".join([f"'{v}'" if isinstance(v, str) else str(v) for v in self.value])
+            if not isinstance(self.value, (list, tuple, set)) or len(self.value) == 0:
+                return "1=0"
+            vals = ", ".join([f"'{str(v).replace(chr(39), chr(39)+chr(39))}'" if isinstance(v, str) else str(v) for v in self.value])
             return f'"{table}"."{self.column}" IN ({vals})'
         else:
-            v = f"'{self.value}'" if isinstance(self.value, str) else str(self.value)
+            if isinstance(self.value, str):
+                v_esc = self.value.replace("'", "''")
+                v = f"'{v_esc}'"
+            elif isinstance(self.value, bool):
+                v = "TRUE" if self.value else "FALSE"
+            elif self.value is None:
+                if op == "EQUALS": return f'"{table}"."{self.column}" IS NULL'
+                if op == "NOT_EQUALS": return f'"{table}"."{self.column}" IS NOT NULL'
+                v = "NULL"
+            else:
+                v = str(self.value)
             return f'"{table}"."{self.column}" {sql_op} {v}'
 
 
@@ -115,7 +126,8 @@ class RCAEngine:
             visited.add(current)
                 
             for rel in self.data_model.relationships:
-                if rel.status != RelationshipStatus.ACCEPTED:
+                status_val = getattr(rel.status, "value", str(rel.status)).upper()
+                if status_val != "ACCEPTED":
                     continue
                     
                 nxt = None
@@ -256,8 +268,24 @@ class RCAEngine:
                 else:
                     classification = "Insufficient Evidence"
                     
+            dim_val = row['dimension_value']
+            if pd.isna(dim_val):
+                dim_val = None
+            elif hasattr(dim_val, "item"):
+                dim_val = dim_val.item()
+            elif isinstance(dim_val, (int, float, str, bool)):
+                pass
+            else:
+                try:
+                    dim_val = int(dim_val)
+                except Exception:
+                    try:
+                        dim_val = float(dim_val)
+                    except Exception:
+                        dim_val = str(dim_val)
+
             results.append(RCAGroupResult(
-                dimension_value=row['dimension_value'],
+                dimension_value=dim_val,
                 affected_metric_value=aff_val,
                 baseline_metric_value=base_val,
                 absolute_difference=abs_diff,
@@ -269,31 +297,79 @@ class RCAEngine:
             
         return results
 
+    def get_reachable_tables(self, source_table: str) -> List[str]:
+        """Returns all tables reachable from source_table via accepted relationships in DataModel."""
+        reachable = {source_table}
+        queue = [source_table]
+        while queue:
+            curr = queue.pop(0)
+            for rel in self.data_model.relationships:
+                status_val = getattr(rel.status, "value", str(rel.status)).upper()
+                if status_val != "ACCEPTED":
+                    continue
+                nxt = None
+                if rel.source_table == curr:
+                    nxt = rel.target_table
+                elif rel.target_table == curr:
+                    nxt = rel.source_table
+                if nxt and nxt not in reachable:
+                    reachable.add(nxt)
+                    queue.append(nxt)
+        return sorted(list(reachable))
+
+    def run_analysis(self, definition: RCAAnalysisDefinition) -> List[RCAGroupResult]:
+        """Convenience alias for execute() for API compatibility."""
+        return self.execute(definition)
+
     def save_analysis(self, config: RCAAnalysisDefinition):
-        import json
-        import os
-        from dataclasses import asdict
         path = os.path.join(self.workspace.project_root, ".dataforge", "rca_analyses.json")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         analyses = self.load_analyses()
         analyses = [a for a in analyses if a.analysis_id != config.analysis_id]
         analyses.append(config)
         with open(path, "w") as f:
-            json.dump([asdict(a) for a in analyses], f, indent=2)
+            json.dump([asdict(a) for a in analyses], f, indent=2, default=str)
 
     def load_analyses(self) -> List[RCAAnalysisDefinition]:
-        import json
-        import os
         path = os.path.join(self.workspace.project_root, ".dataforge", "rca_analyses.json")
         if not os.path.exists(path):
             return []
-        with open(path, "r") as f:
-            data = json.load(f)
-        res = []
-        for d in data:
-            d["affected_conditions"] = [RCACondition(**c) for c in d.get("affected_conditions", [])]
-            if d.get("custom_baseline_conditions"):
-                d["custom_baseline_conditions"] = [RCACondition(**c) for c in d["custom_baseline_conditions"]]
-            res.append(RCAAnalysisDefinition(**d))
-        return res
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            res = []
+            for d in data:
+                d["affected_conditions"] = [RCACondition(**c) for c in d.get("affected_conditions", [])]
+                if d.get("custom_baseline_conditions"):
+                    d["custom_baseline_conditions"] = [RCACondition(**c) for c in d["custom_baseline_conditions"]]
+                res.append(RCAAnalysisDefinition(**d))
+            return res
+        except Exception:
+            return []
+
+    def save_result(self, results: List[RCAGroupResult], analysis_id: Optional[str] = None):
+        """Save RCA execution results to .dataforge/rca_results.json."""
+        path = os.path.join(self.workspace.project_root, ".dataforge", "rca_results.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        all_results = self.load_results()
+        key = analysis_id or "latest"
+        all_results = [r for r in all_results if r.get("analysis_id") != key]
+        all_results.append({
+            "analysis_id": key,
+            "saved_at": time.time(),
+            "results": [asdict(r) for r in results]
+        })
+        with open(path, "w") as f:
+            json.dump(all_results, f, indent=2, default=str)
+
+    def load_results(self) -> List[Dict[str, Any]]:
+        """Load saved RCA execution results from .dataforge/rca_results.json."""
+        path = os.path.join(self.workspace.project_root, ".dataforge", "rca_results.json")
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
 

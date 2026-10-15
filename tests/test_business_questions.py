@@ -209,3 +209,69 @@ def test_no_raw_data_mutation(workspace):
     qm = QuestionManager(workspace)
     qm.create_question("Mutate test")
     assert not any(f.endswith('.csv') for f in os.listdir(workspace.project_root)) # Just ensuring it didn't write csvs
+
+def test_generate_schema_suggestions_empty_workspace(workspace):
+    qm = QuestionManager(workspace)
+    suggestions = qm.generate_schema_suggestions()
+    assert suggestions == []
+    assert len(qm.get_active_questions()) == 0
+
+def test_generate_schema_suggestions_with_tables_and_kpis(tmp_path):
+    import pandas as pd
+    ws = ProjectWorkspace(str(tmp_path))
+    # Write real tables with date and categorical columns
+    df_orders = pd.DataFrame({
+        "order_id": [1, 2, 3],
+        "order_date": ["2023-01-01", "2023-01-02", "2023-01-03"],
+        "region": ["North", "South", "East"],
+        "revenue": [100.0, 200.0, 150.0]
+    })
+    df_orders.to_csv(os.path.join(str(tmp_path), "orders.csv"), index=False)
+    ws.discover_datasets()
+
+    kpi_mgr = KPIManager(ws)
+    kpi = KPIDefinition(
+        kpi_id="kpi-rev",
+        kpi_name="Total Revenue",
+        business_definition="Sum of order revenue",
+        formula="SUM(revenue)",
+        metric_definitions=[],
+        source_tables=["orders"],
+        source_columns=["revenue"],
+        unit="USD",
+        description="Total sales money"
+    )
+    kpi_mgr.save_kpi(kpi)
+
+    qm = QuestionManager(ws)
+    created = qm.generate_schema_suggestions(kpis=[kpi])
+    assert len(created) > 0
+
+    # Ensure suggestions mention actual schema elements
+    created_texts = " ".join([q.question for q in created])
+    assert "Total Revenue" in created_texts
+    assert "orders" in created_texts
+
+    # Ensure deduplication on subsequent run
+    second_run = qm.generate_schema_suggestions(kpis=[kpi])
+    assert second_run == []
+    # Total count remains equal to first run
+    assert len(qm.get_active_questions()) == len(created)
+
+def test_manual_question_creation_and_update(workspace):
+    qm = QuestionManager(workspace)
+    q = qm.create_question("Which product had the highest return rate?")
+    assert q.status == "Pending"
+    assert q.question == "Which product had the highest return rate?"
+
+    qm.update_question(q.question_id, description="Analyzing return spikes in Q3", related_kpi_id="kpi-returns")
+    updated = qm.get_question(q.question_id)
+    assert updated.description == "Analyzing return spikes in Q3"
+    assert updated.related_kpi_id == "kpi-returns"
+
+    # Reload from disk
+    qm_reloaded = QuestionManager(workspace)
+    loaded_q = qm_reloaded.get_question(q.question_id)
+    assert loaded_q is not None
+    assert loaded_q.question == "Which product had the highest return rate?"
+    assert loaded_q.description == "Analyzing return spikes in Q3"

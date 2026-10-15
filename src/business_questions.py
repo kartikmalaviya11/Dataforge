@@ -158,7 +158,7 @@ class QuestionManager:
         q = self.get_question(question_id)
         if not q or not q.related_kpi_id:
             return None
-            
+
         kpis = kpi_manager.load_kpis()
         for k in kpis:
             if k.kpi_id == q.related_kpi_id:
@@ -166,3 +166,70 @@ class QuestionManager:
                     return None
                 return k
         return None
+
+    def generate_schema_suggestions(
+        self,
+        table_results: Optional[Dict[str, Any]] = None,
+        kpis: Optional[List[Any]] = None
+    ) -> List[BusinessQuestion]:
+        """
+        Generates deterministic, schema-grounded business question suggestions
+        derived from actual loaded tables, column names, semantic types, and active KPIs.
+        Never invents metrics or fabricates analyses.
+        Prevents duplicate questions on repeated calls.
+        """
+        if not hasattr(self.workspace, "registry") or not self.workspace.registry:
+            return []
+
+        existing_texts = {q.question.strip().lower() for q in self.questions if not q.is_archived}
+        candidates = []
+
+        # 1. Ground suggestions in active KPIs
+        active_kpis = kpis or []
+        if not active_kpis and hasattr(self.workspace, "project_root"):
+            try:
+                km = KPIManager(self.workspace)
+                active_kpis = km.load_kpis()
+            except Exception:
+                active_kpis = []
+
+        for k in active_kpis:
+            k_name = getattr(k, "kpi_name", getattr(k, "name", ""))
+            if not k_name:
+                continue
+            candidates.append(f"What is the overall performance and distribution of {k_name}?")
+            src_cols = getattr(k, "source_columns", [])
+            src_tables = getattr(k, "source_tables", [])
+            if src_cols and src_tables:
+                candidates.append(f"How do variations in {', '.join(src_cols)} within {src_tables[0]} drive {k_name}?")
+
+        # 2. Ground suggestions in loaded tables and columns
+        for tname in sorted(self.workspace.registry.keys()):
+            cols = []
+            try:
+                df, _ = self.workspace.load_table(tname)
+                if df is not None:
+                    cols = list(df.columns)
+            except Exception:
+                pass
+
+            date_cols = [c for c in cols if any(term in c.lower() for term in ("date", "time", "year", "month", "day", "timestamp", "created", "order"))]
+            cat_cols = [c for c in cols if any(term in c.lower() for term in ("category", "region", "status", "segment", "type", "channel", "country", "customer"))]
+
+            for dcol in sorted(date_cols)[:2]:
+                candidates.append(f"What is the historical trend of {tname} activity over {dcol}?")
+            for ccol in sorted(cat_cols)[:2]:
+                candidates.append(f"How do records in {tname} distribute across different {ccol} segments?")
+
+            if not date_cols and not cat_cols and cols:
+                candidates.append(f"What are the central tendencies and anomalies in {tname}?")
+
+        newly_created = []
+        for text in candidates:
+            norm_text = text.strip()
+            if norm_text.lower() not in existing_texts:
+                q = self.create_question(norm_text)
+                newly_created.append(q)
+                existing_texts.add(norm_text.lower())
+
+        return newly_created

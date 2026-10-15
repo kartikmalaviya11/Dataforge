@@ -267,3 +267,90 @@ def test_model_persistence_and_isolation(tmp_path):
 def test_raw_data_immutability():
     # Ensures nothing attempts to load raw data
     pass
+
+def test_generate_dax_measures_with_model_metadata():
+    tables = {
+        "FactSales": TableSchema(name="FactSales", row_count=1000, columns={
+            "SalesID": ColumnSchema(name="SalesID", type="integer", is_unique=True),
+            "Revenue": ColumnSchema(name="Revenue", type="float"),
+            "Profit": ColumnSchema(name="Profit", type="float"),
+            "CustomerID": ColumnSchema(name="CustomerID", type="integer")
+        })
+    }
+    dm = DataModel(tables=tables, relationships=[])
+    mg = ModelGenerator(data_model=dm)
+
+    kpis = [
+        {
+            "kpi_name": "Total Revenue",
+            "formula": "SUM(Revenue)",
+            "source_tables": ["FactSales"],
+            "source_columns": ["Revenue"],
+            "unit": "currency"
+        },
+        {
+            "kpi_name": "Profit Margin",
+            "formula": "SUM(Profit) / SUM(Revenue)",
+            "source_tables": ["FactSales"],
+            "source_columns": ["Profit", "Revenue"],
+            "unit": "ratio"
+        },
+        {
+            "kpi_name": "Unique Customers",
+            "formula": "COUNT_DISTINCT(CustomerID)",
+            "source_tables": ["FactSales"],
+            "source_columns": ["CustomerID"],
+            "unit": "integer"
+        }
+    ]
+
+    measures = mg.generate_dax_measures(kpis)
+    assert len(measures) == 3
+
+    m1 = measures[0]
+    assert m1["measure_name"] == "Total Revenue"
+    assert m1["table"] == "FactSales"
+    assert m1["dax_expression"] == "SUM('FactSales'[Revenue])"
+    assert m1["format_string"] == "$#,##0.00"
+    assert m1["referenced_columns"] == ["'FactSales'[Revenue]"]
+
+    m2 = measures[1]
+    assert m2["measure_name"] == "Profit Margin"
+    assert m2["table"] == "FactSales"
+    assert m2["dax_expression"] == "DIVIDE(SUM('FactSales'[Profit]), SUM('FactSales'[Revenue]))"
+    assert m2["format_string"] == "0.0%"
+
+    m3 = measures[2]
+    assert m3["measure_name"] == "Unique Customers"
+    assert m3["table"] == "FactSales"
+    assert m3["dax_expression"] == "DISTINCTCOUNT('FactSales'[CustomerID])"
+    assert m3["format_string"] == "#,##0"
+
+def test_generate_dax_measures_persistence(tmp_path):
+    dm = DataModel(tables={}, relationships=[])
+    mg = ModelGenerator(data_model=dm)
+
+    measures = [
+        {
+            "measure_name": "Total Sales",
+            "kpi_name": "Total Sales",
+            "table": "Orders",
+            "dax_expression": "SUM('Orders'[Sales])",
+            "format_string": "$#,##0.00",
+            "status": "VALID",
+            "referenced_columns": ["'Orders'[Sales]"]
+        }
+    ]
+
+    base_path = str(tmp_path / ".dataforge")
+    mg.save_dax_measures(measures, base_path=base_path)
+
+    loaded = ModelGenerator.load_dax_measures(base_path=base_path)
+    assert len(loaded) == 1
+    assert loaded[0]["measure_name"] == "Total Sales"
+    assert loaded[0]["dax_expression"] == "SUM('Orders'[Sales])"
+
+def test_generate_dax_measures_empty_kpis():
+    dm = DataModel(tables={}, relationships=[])
+    mg = ModelGenerator(data_model=dm)
+    assert mg.generate_dax_measures([]) == []

@@ -1,0 +1,9 @@
+order_id,customer_id,order_date,revenue,status,review_score
+101,1,2023-01-15,150.00,Delivered,5
+102,2,2023-01-18,220.50,Delivered,4
+103,1,2023-02-01,90.00,Returned,1
+104,3,2023-02-14,310.00,Delivered,5
+105,4,2023-03-05,45.00,Cancelled,2
+106,5,2023-03-20,180.00,Delivered,4
+107,2,2023-04-02,75.00,Returned,1
+108,3,2023-04-10,400.00,Delivered,5

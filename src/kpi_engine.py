@@ -518,12 +518,133 @@ class CrossValidator:
         except:
             return a == b
 
+
+@dataclass
+class KPISnapshot:
+    snapshot_id: str
+    kpi_id: str
+    kpi_name: str
+    dataset_version_id: Optional[str]
+    value: Any
+    recorded_at: str
+
+    def to_dict(self):
+        return {
+            "snapshot_id": self.snapshot_id,
+            "kpi_id": self.kpi_id,
+            "kpi_name": self.kpi_name,
+            "dataset_version_id": self.dataset_version_id,
+            "value": self.value,
+            "recorded_at": self.recorded_at
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            snapshot_id=data.get("snapshot_id", ""),
+            kpi_id=data.get("kpi_id", ""),
+            kpi_name=data.get("kpi_name", ""),
+            dataset_version_id=data.get("dataset_version_id"),
+            value=data.get("value"),
+            recorded_at=data.get("recorded_at", "")
+        )
+
 class KPIManager:
     def __init__(self, workspace):
         self.workspace = workspace
         self.file_path = os.path.join(workspace.project_root, ".dataforge", "kpis.json")
+        self.snapshot_file = os.path.join(workspace.project_root, ".dataforge", "kpi_snapshots.json")
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         
+    def load_snapshots(self) -> List['KPISnapshot']:
+        if not os.path.exists(self.snapshot_file):
+            return []
+        try:
+            import json
+            with open(self.snapshot_file, "r") as f:
+                data = json.load(f)
+            return [KPISnapshot.from_dict(s) for s in data]
+        except Exception:
+            return []
+
+    def save_snapshot(self, snapshot: 'KPISnapshot'):
+        import json
+        snaps = self.load_snapshots()
+        snaps.append(snapshot)
+        with open(self.snapshot_file, "w") as f:
+            json.dump([s.to_dict() for s in snaps], f, indent=2)
+
+    def get_snapshot(self, snapshot_id: str) -> Optional['KPISnapshot']:
+        for s in self.load_snapshots():
+            if s.snapshot_id == snapshot_id:
+                return s
+        return None
+
+    def compare_snapshots(self, snap_a: Any, snap_b: Any) -> Dict[str, Any]:
+        """
+        Compare two KPI snapshots.
+
+        Zero-baseline handling:
+        - When baseline is 0 and comparison is non-zero, relative_change_pct is explicitly None
+          (division by zero is undefined). relative_change_note documents this state.
+          absolute_difference and directional status ('INCREASED' / 'DECREASED') are preserved.
+        - When both baseline and comparison are 0, relative_change_pct is 0.0, absolute_difference
+          is 0.0, and status is 'UNCHANGED'.
+        - When baseline is non-zero, standard relative percentage change ((val_b - val_a) / abs(val_a)) * 100
+          is computed with ddof/sign preserved.
+        """
+        if isinstance(snap_a, str):
+            s1 = self.get_snapshot(snap_a)
+            if not s1:
+                raise ValueError(f"Snapshot not found: {snap_a}")
+        else:
+            s1 = snap_a
+
+        if isinstance(snap_b, str):
+            s2 = self.get_snapshot(snap_b)
+            if not s2:
+                raise ValueError(f"Snapshot not found: {snap_b}")
+        else:
+            s2 = snap_b
+
+        val_a, val_b = s1.value, s2.value
+        abs_diff = None
+        rel_change_pct = None
+        rel_change_note = None
+
+        if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
+            abs_diff = float(val_b - val_a)
+            if val_a != 0:
+                rel_change_pct = float(((val_b - val_a) / abs(val_a)) * 100.0)
+            else:
+                if val_b == 0:
+                    rel_change_pct = 0.0
+                    rel_change_note = "Zero baseline with zero change (0.0%)"
+                else:
+                    rel_change_pct = None
+                    rel_change_note = "Undefined (baseline is zero)"
+            status = "INCREASED" if abs_diff > 0 else ("DECREASED" if abs_diff < 0 else "UNCHANGED")
+        else:
+            status = "UNCHANGED" if val_a == val_b else "DIFFERENT"
+            rel_change_note = "Non-numeric values"
+
+        return {
+            "snapshot_id_a": s1.snapshot_id,
+            "snapshot_id_b": s2.snapshot_id,
+            "kpi_id": s2.kpi_id or s1.kpi_id,
+            "kpi_name": s2.kpi_name or s1.kpi_name,
+            "dataset_version_id_a": s1.dataset_version_id,
+            "dataset_version_id_b": s2.dataset_version_id,
+            "versions_distinguishable": s1.dataset_version_id != s2.dataset_version_id,
+            "value_a": val_a,
+            "value_b": val_b,
+            "absolute_difference": abs_diff,
+            "relative_change_pct": rel_change_pct,
+            "relative_change_note": rel_change_note,
+            "status": status,
+            "recorded_at_a": s1.recorded_at,
+            "recorded_at_b": s2.recorded_at,
+        }
     def load_kpis(self) -> List[KPIDefinition]:
         if not os.path.exists(self.file_path):
             return []

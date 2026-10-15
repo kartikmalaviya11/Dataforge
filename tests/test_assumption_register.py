@@ -38,3 +38,39 @@ def test_isolation(tmp_path):
     m1.create("T", "D", "R", "High", [])
     assert len(m1.get_all()) == 1
     assert len(m2.get_all()) == 0
+
+def test_create_validation_empty_title(manager):
+    with pytest.raises(ValueError, match="Assumption title cannot be empty"):
+        manager.create("", "Valid Description", "Reason", "LOW", [])
+    with pytest.raises(ValueError, match="Assumption title cannot be empty"):
+        manager.create("   ", "Valid Description", "Reason", "LOW", [])
+    assert len(manager.get_all()) == 0
+
+def test_create_validation_empty_description(manager):
+    with pytest.raises(ValueError, match="Assumption description cannot be empty"):
+        manager.create("Valid Title", "", "Reason", "LOW", [])
+    with pytest.raises(ValueError, match="Assumption description cannot be empty"):
+        manager.create("Valid Title", "   ", "Reason", "LOW", [])
+    assert len(manager.get_all()) == 0
+
+def test_create_full_persistence_and_fields(manager):
+    a_id = manager.create(
+        title="Currency in USD",
+        description="All transaction amounts normalized to USD at time of ingestion",
+        reason="Finance team policy",
+        risk="HIGH",
+        used_in=["sales", "revenue_kpi"]
+    )
+    assert a_id is not None
+    assert len(manager.get_all()) == 1
+
+    # Reload from disk in a fresh manager instance
+    reloaded = AssumptionRegisterManager(manager.persistence_dir)
+    assump = reloaded.assumptions.get(a_id)
+    assert assump is not None
+    assert assump.title == "Currency in USD"
+    assert assump.description == "All transaction amounts normalized to USD at time of ingestion"
+    assert assump.reason == "Finance team policy"
+    assert assump.risk == "HIGH"
+    assert assump.used_in == ["sales", "revenue_kpi"]
+    assert assump.status == "ACTIVE"
