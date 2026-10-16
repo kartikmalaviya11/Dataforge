@@ -531,6 +531,7 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
     import streamlit as st
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
+    from src.date_analysis_engine import SUPPORTED_MISSING_DATE_BEHAVIORS
 
     st.markdown('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
@@ -550,7 +551,14 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
     date_cols = list(df.columns)
     target_col = st.selectbox("Date Column", date_cols, key="date_col")
 
-    missing_behavior = st.selectbox("Missing Date Behavior", ["pad", "drop", "keep"], key="date_missing")
+    missing_behavior = st.selectbox(
+        "Missing Date Behavior",
+        options=list(SUPPORTED_MISSING_DATE_BEHAVIORS),
+        index=0,
+        format_func=lambda x: "Drop missing / invalid dates (Default)" if x == "drop" else "Error on missing / invalid dates",
+        key="date_missing",
+        help="Choose 'drop' to exclude missing or invalid dates when generating the date dimension, or 'error' to halt and raise an error if any missing or invalid date values are encountered."
+    )
 
     if dataforge_button("Generate Date Table", type="primary"):
         def _do_action():

@@ -217,3 +217,86 @@ def test_date_analysis_missing_date_behavior_drop_vs_error(date_engine, workspac
     # 3. Verify raw file was NOT mutated
     after_hash = hashlib.sha256(path_d.read_bytes()).hexdigest()
     assert initial_hash == after_hash
+
+    # 4. Lowercase variants ("drop", "error")
+    config_drop_lower = DateDimensionConfig(
+        config_id="c_drop_lower",
+        source_table="raw_dates",
+        date_column="date_col",
+        missing_date_behavior="drop"
+    )
+    date_engine.register_config(config_drop_lower)
+    assert len(date_engine.generate_date_table_pandas("c_drop_lower")) == 5
+    assert len(date_engine.generate_date_table_duckdb("c_drop_lower")) == 5
+
+    # 5. Unsupported behaviors (e.g. pad, keep) raise ValueError indicating supported contract
+    for unsupported in ("pad", "keep", "unsupported_mode"):
+        cfg_unsupported = DateDimensionConfig(
+            config_id=f"c_{unsupported}",
+            source_table="raw_dates",
+            date_column="date_col",
+            missing_date_behavior=unsupported
+        )
+        date_engine.register_config(cfg_unsupported)
+        with pytest.raises(ValueError, match="Unsupported missing_date_behavior"):
+            date_engine.generate_date_table_pandas(f"c_{unsupported}")
+        with pytest.raises(ValueError, match="Unsupported missing_date_behavior"):
+            date_engine.generate_date_table_duckdb(f"c_{unsupported}")
+
+    # 6. Verify DuckDB and Pandas error on null-only (missing date) values with ERROR
+    df_null_only = pd.DataFrame({
+        'date_col': ['2023-01-01', None, '2023-01-05']
+    })
+    path_null = workspace.project_root / "null_dates.csv"
+    df_null_only.to_csv(path_null, index=False)
+    safe_null_path = str(path_null).replace("'", "''")
+    date_engine.duckdb_engine.conn.execute(f"CREATE OR REPLACE VIEW null_dates AS SELECT * FROM read_csv_auto('{safe_null_path}', header=True)")
+
+    cfg_null_err = DateDimensionConfig(
+        config_id="c_null_err",
+        source_table="null_dates",
+        date_column="date_col",
+        missing_date_behavior="ERROR"
+    )
+    date_engine.register_config(cfg_null_err)
+    with pytest.raises(ValueError, match="contains invalid or missing dates"):
+        date_engine.generate_date_table_pandas("c_null_err")
+    with pytest.raises(ValueError, match="contains invalid date values or missing dates"):
+        date_engine.generate_date_table_duckdb("c_null_err")
+
+
+def test_date_analysis_contract_alignment():
+    """Verify that DateAnalysisEngine and UI contracts are strictly synchronized."""
+    from src.date_analysis_engine import (
+        SUPPORTED_MISSING_DATE_BEHAVIORS,
+        validate_missing_date_behavior
+    )
+    import ast
+    from pathlib import Path
+
+    # 1. Engine contract defines exact supported behaviors
+    assert set(SUPPORTED_MISSING_DATE_BEHAVIORS) == {"drop", "error"}
+
+    # 2. Validation function behaviors
+    assert validate_missing_date_behavior("drop") == "drop"
+    assert validate_missing_date_behavior("DROP") == "drop"
+    assert validate_missing_date_behavior("error") == "error"
+    assert validate_missing_date_behavior("ERROR") == "error"
+    assert validate_missing_date_behavior(None) == "drop"
+    assert validate_missing_date_behavior("") == "drop"
+
+    with pytest.raises(ValueError, match="Unsupported missing_date_behavior 'pad'"):
+        validate_missing_date_behavior("pad")
+
+    with pytest.raises(ValueError, match="Unsupported missing_date_behavior 'keep'"):
+        validate_missing_date_behavior("keep")
+
+    # 3. Verify UI in ui/pages/analysis.py references SUPPORTED_MISSING_DATE_BEHAVIORS
+    ui_path = Path(__file__).resolve().parent.parent / "ui" / "pages" / "analysis.py"
+    ui_source = ui_path.read_text(encoding="utf-8")
+    assert "SUPPORTED_MISSING_DATE_BEHAVIORS" in ui_source
+    assert '["pad", "drop", "keep"]' not in ui_source
+
+    # 4. Verify AST of ui/pages/analysis.py parses cleanly
+    tree = ast.parse(ui_source)
+    assert tree is not None
