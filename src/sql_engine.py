@@ -67,6 +67,11 @@ class DuckDBEngine:
                     for col in df.columns:
                         if df[col].dtype == 'object':
                             mask = df[col].notna()
+                            if mask.any():
+                                num_converted = pd.to_numeric(df.loc[mask, col], errors='coerce')
+                                if num_converted.notna().all():
+                                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                                    continue
                             df[col] = df[col].where(mask, None)
                             df.loc[mask, col] = df.loc[mask, col].astype(str)
                     

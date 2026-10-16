@@ -448,3 +448,184 @@ def test_render_cleaning_does_not_cache_df_in_scan_results(tmp_path):
 
         # res['df'] must remain None
         assert scan_res["df"] is None
+
+
+# =====================================================================
+# 5. Large Multi-Table Progress & Optimization Tests
+# =====================================================================
+
+def test_run_quality_checks_granular_progress_callbacks():
+    """Verify run_quality_checks reports all 12 individual checks via progress_callback."""
+    from src.quality_engine import run_quality_checks
+    from src.profiler import profile_dataset
+    from src.type_detector import detect_semantic_types
+
+    df = pd.DataFrame({
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", "Charlie"],
+        "email": ["a@example.com", "b@example.com", "c@example.com"],
+    })
+    col_profiles = profile_dataset(df)
+    type_results = detect_semantic_types(df, col_profiles)
+
+    reported_steps = []
+    def callback(step_name):
+        reported_steps.append(step_name)
+
+    issues = run_quality_checks(df, col_profiles, type_results, progress_callback=callback)
+    assert len(reported_steps) == 12
+    assert "Missing values (1/12)" in reported_steps[0]
+    assert "Consistency rules (12/12)" in reported_steps[11]
+    assert isinstance(issues, list)
+
+
+def test_pipeline_forwards_quality_check_progress(tmp_path):
+    """Verify run_pipeline forwards granular quality check steps to progress_callback."""
+    f = tmp_path / "sample.csv"
+    f.write_text("id,val\n1,10\n2,20\n", encoding="utf-8")
+
+    stages = []
+    def callback(stage):
+        stages.append(stage)
+
+    success, err = run_pipeline(str(f), None, progress_callback=callback)
+    assert success is True
+    assert any("Quality: Missing values (1/12)" in s for s in stages)
+    assert any("Quality: Consistency rules (12/12)" in s for s in stages)
+    assert any("Consolidating issues" in s for s in stages)
+
+
+def test_case_inconsistencies_vectorized_preservation():
+    """Verify check_case_inconsistencies preserves exact issue details with vectorized fast path."""
+    from src.quality_engine import check_case_inconsistencies, QualityIssue, ISSUE_INCONSISTENT_CASE
+    from src.profiler import profile_dataset
+
+    # "SP" appears 3 times, "sp" appears 1 time, "Sp" appears 1 time.
+    # Canonical should be "SP" (count 3).
+    # "RJ" appears 2 times with identical casing (should NOT be flagged).
+    df = pd.DataFrame({
+        "city": ["SP", "sp", "SP", "Sp", "SP", "RJ", "RJ"]
+    })
+    col_profiles = profile_dataset(df)
+
+    issues = check_case_inconsistencies(df, col_profiles)
+    assert len(issues) == 2  # rows 1 ('sp') and 3 ('Sp')
+
+    row_indices = [i.row_index for i in issues]
+    assert 1 in row_indices
+    assert 3 in row_indices
+
+    for issue in issues:
+        assert issue.issue_type == ISSUE_INCONSISTENT_CASE
+        assert issue.column == "city"
+        assert issue.check_name == "case_inconsistency_check"
+        assert "canonical is 'SP'" in issue.description
+
+    # Test clean column returns 0 issues quickly
+    clean_df = pd.DataFrame({"city": ["London", "Paris", "Berlin"] * 100})
+    clean_profiles = profile_dataset(clean_df)
+    clean_issues = check_case_inconsistencies(clean_df, clean_profiles)
+    assert len(clean_issues) == 0
+
+
+def test_slots_on_quality_and_standardized_issues():
+    """Verify slots=True is active on QualityIssue and StandardizedIssue, saving memory."""
+    from src.quality_engine import QualityIssue
+    from src.issue_manager import StandardizedIssue, IssueClassification
+
+    qi = QualityIssue(row_index=0, column="col", issue_type="TEST", check_name="test_check")
+    assert not hasattr(qi, "__dict__")
+
+    si = StandardizedIssue(
+        issue_id="ISS-1",
+        source="QUALITY_CHECK",
+        issue_type="TEST",
+        rule_or_check_name="test_check",
+        row_index=0,
+        column="col",
+        actual_value=None,
+        expected_condition="condition",
+        severity="WARNING",
+        message="msg",
+        recommendation="rec",
+        classification=IssueClassification.REVIEW_REQUIRED,
+        affected_count=42
+    )
+    assert not hasattr(si, "__dict__")
+    assert si.affected_count == 42
+
+
+def test_sql_analyzer_varchar_numeric_aggregation():
+    """Verify SQLAnalyzer uses TRY_CAST for SUM and AVERAGE over VARCHAR numeric columns."""
+    from src.sql_analyzer import SQLAnalyzer
+    from src.kpi_engine import KPIRecommendation
+
+    df = pd.DataFrame({
+        "Amount": [" 100.5 ", "200.0", "50", "-10.5", None]
+    })
+    analyzer = SQLAnalyzer(df)
+
+    kpi_sum = KPIRecommendation("Total Amount", "Aggregation", "HIGH", "AVAILABLE", ["Amount"], ["Amount"], "SUM(Amount)", "")
+    res_sum = analyzer.aggregate_kpi(kpi_sum, 340.0)
+    assert res_sum.match_status == "MATCH"
+    assert res_sum.sql_result == 340.0
+
+    kpi_avg = KPIRecommendation("Avg Amount", "Aggregation", "HIGH", "AVAILABLE", ["Amount"], ["Amount"], "AVERAGE(Amount)", "")
+    res_avg = analyzer.aggregate_kpi(kpi_avg, 85.0)
+    assert res_avg.match_status == "MATCH"
+    assert res_avg.sql_result == 85.0
+
+    analyzer.close()
+
+
+def test_sql_analyzer_strict_invalid_non_match():
+    """Verify that all-invalid/non-numeric columns yield NOT_AVAILABLE, not false MATCH."""
+    from src.sql_analyzer import SQLAnalyzer, _compare_values
+    from src.kpi_engine import KPIRecommendation
+
+    # Column with non-numeric text
+    df = pd.DataFrame({
+        "NonNumeric": ["abc", "xyz", "hello"]
+    })
+    analyzer = SQLAnalyzer(df)
+
+    kpi_sum = KPIRecommendation("Sum NonNumeric", "Aggregation", "HIGH", "AVAILABLE", ["NonNumeric"], ["NonNumeric"], "SUM(NonNumeric)", "")
+    res_sum = analyzer.aggregate_kpi(kpi_sum, None)
+    assert res_sum.match_status == "NOT_AVAILABLE"
+
+    # Compare values must not validate (None, None) or (NaN, NaN) as MATCH
+    is_match, diff = _compare_values(None, None)
+    assert is_match is False
+
+    is_match, diff = _compare_values(float("nan"), float("nan"))
+    assert is_match is False
+
+    is_match, diff = _compare_values(10.0, None)
+    assert is_match is False
+
+    analyzer.close()
+
+
+def test_sql_engine_excel_parquet_numeric_preservation(tmp_path):
+    """Verify SQL engine preserves numeric columns in Excel spreadsheets without forcing VARCHAR."""
+    from src.sql_engine import DuckDBEngine
+    from src.workspace import ProjectWorkspace
+
+    ws = ProjectWorkspace(tmp_path / "ws_excel")
+    ws.project_root.mkdir(parents=True, exist_ok=True)
+
+    excel_file = ws.project_root / "test_data.xlsx"
+    df = pd.DataFrame({
+        "NumericText": [10.5, 20.0, None, 30.25],
+        "CategoryText": ["A", "B", None, "D"]
+    })
+    df.to_excel(excel_file, index=False)
+    ws.discover_datasets()
+
+    tname = list(ws.registry.keys())[0]
+    engine = DuckDBEngine(ws)
+    res = engine.execute_query(f'SELECT SUM("NumericText") as total FROM "{tname}"')
+    # Verify DuckDB can query SUM without VARCHAR error
+    assert res is not None
+    assert abs(res["total"].iloc[0] - 60.75) < 1e-4
+    engine.close()
