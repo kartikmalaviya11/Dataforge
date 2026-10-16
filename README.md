@@ -221,13 +221,18 @@ DATAFORGE maintains strict automated testing across unit, integration, property-
 ```
 **Latest Verified Result:**
 ```text
-================ 574 passed, 159 warnings in 108.05s ================
+================ 587 passed, 155 warnings in 105.37s ================
 ```
-* **574 Passed, 0 Failed, 0 Errors.**
+* **587 Passed, 0 Failed, 0 Errors.**
 * `datetime.utcnow()` has been deprecated since Python 3.12. Python recommends timezone-aware UTC datetime values, such as `datetime.now(datetime.UTC)`. Other warnings in the recorded test run include date-parsing fallbacks and Streamlit parameter deprecations. See the official Python documentation: https://docs.python.org/3/library/datetime.html#datetime.datetime.utcnow.
 
 ### Run Playwright Browser Acceptance Suite
+> **Note:** Playwright is optional. The core unit, integration, and property-based test suites run without Playwright. If Playwright is not installed, browser acceptance tests are automatically skipped without errors.
+
+To run the end-to-end browser acceptance suite:
 ```powershell
+pip install playwright
+playwright install chromium
 .venv\Scripts\python -m pytest tests/test_browser_acceptance.py -v
 ```
 **Latest Verified Result:**

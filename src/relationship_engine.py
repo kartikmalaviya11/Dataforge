@@ -1,4 +1,6 @@
-from typing import Dict, List, Set, Any
+import json
+from pathlib import Path
+from typing import Dict, List, Set, Any, Union, Optional
 import pandas as pd
 from src.data_model import RelationshipCandidate, Cardinality, RelationshipStatus
 from src.type_detector import detect_semantic_type
@@ -154,3 +156,58 @@ class RelationshipDetector:
 
         candidates.sort(key=lambda c: (-c.confidence, c.source_table, c.source_column, c.target_table, c.target_column))
         return candidates
+
+    @staticmethod
+    def candidate_to_dict(c: RelationshipCandidate) -> Dict[str, Any]:
+        return {
+            "source_table": c.source_table,
+            "source_column": c.source_column,
+            "target_table": c.target_table,
+            "target_column": c.target_column,
+            "cardinality": c.cardinality.value if hasattr(c.cardinality, "value") else str(c.cardinality),
+            "source_unique": bool(c.source_unique),
+            "target_unique": bool(c.target_unique),
+            "match_coverage": float(c.match_coverage),
+            "orphan_rate": float(c.orphan_rate),
+            "confidence": float(c.confidence),
+            "evidence": list(c.evidence) if c.evidence else [],
+            "status": c.status.value if hasattr(c.status, "value") else str(c.status),
+        }
+
+    @staticmethod
+    def candidate_from_dict(d: Dict[str, Any]) -> RelationshipCandidate:
+        return RelationshipCandidate(
+            source_table=d["source_table"],
+            source_column=d["source_column"],
+            target_table=d["target_table"],
+            target_column=d["target_column"],
+            cardinality=d["cardinality"],
+            source_unique=bool(d.get("source_unique", False)),
+            target_unique=bool(d.get("target_unique", False)),
+            match_coverage=float(d.get("match_coverage", 0.0)),
+            orphan_rate=float(d.get("orphan_rate", 0.0)),
+            confidence=float(d.get("confidence", 0.0)),
+            evidence=list(d.get("evidence", [])),
+            status=d.get("status", RelationshipStatus.CANDIDATE.value),
+        )
+
+    @staticmethod
+    def save_candidates(candidates: List[RelationshipCandidate], filepath: Union[str, Path]) -> None:
+        p = Path(filepath)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = [RelationshipDetector.candidate_to_dict(c) for c in candidates]
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    @staticmethod
+    def load_candidates(filepath: Union[str, Path]) -> List[RelationshipCandidate]:
+        p = Path(filepath)
+        if not p.exists():
+            return []
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            items = data if isinstance(data, list) else data.get("candidates", [])
+            return [RelationshipDetector.candidate_from_dict(d) for d in items]
+        except Exception:
+            return []

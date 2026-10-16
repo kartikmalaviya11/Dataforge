@@ -354,3 +354,27 @@ def test_generate_dax_measures_empty_kpis():
     dm = DataModel(tables={}, relationships=[])
     mg = ModelGenerator(data_model=dm)
     assert mg.generate_dax_measures([]) == []
+
+def test_dimension_classification_fallback_to_accepted_relationships():
+    # Table where ColumnSchema is_unique was not pre-set (False), but is the 1-side of an accepted relationship
+    tables = {
+        "DimProduct": TableSchema(name="DimProduct", row_count=50, columns={
+            "ProductID": ColumnSchema(name="ProductID", type="integer", is_unique=False),
+            "ProductName": ColumnSchema(name="ProductName", type="string", is_unique=False)
+        })
+    }
+    rels = [
+        RelationshipCandidate(
+            source_table="FactSales", source_column="ProductID",
+            target_table="DimProduct", target_column="ProductID",
+            cardinality="N:1", source_unique=False, target_unique=True,
+            match_coverage=1.0, orphan_rate=0.0, confidence=1.0, evidence=[], status="ACCEPTED"
+        )
+    ]
+    dm = DataModel(tables=tables, relationships=rels)
+    mg = ModelGenerator(data_model=dm)
+    spec = mg.generate()
+
+    assert spec.tables[0].table_name == "DimProduct"
+    assert spec.tables[0].role == ModelTableRole.DIMENSION
+    assert spec.tables[0].primary_key == "ProductID"

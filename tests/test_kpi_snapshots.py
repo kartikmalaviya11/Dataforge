@@ -9,6 +9,7 @@ def workspace():
     ws_dir = ".dataforge_test_kpi"
     if os.path.exists(ws_dir):
         shutil.rmtree(ws_dir)
+    os.makedirs(ws_dir, exist_ok=True)
     ws = ProjectWorkspace(ws_dir)
     yield ws
     if os.path.exists(ws_dir):
@@ -16,10 +17,10 @@ def workspace():
 
 def test_kpi_snapshot_persistence(workspace):
     km = KPIManager(workspace)
-    
+
     # initially empty
     assert len(km.load_snapshots()) == 0
-    
+
     # create snapshot
     snap = KPISnapshot(
         snapshot_id="s1",
@@ -30,7 +31,7 @@ def test_kpi_snapshot_persistence(workspace):
         recorded_at="2026-10-08T00:00:00Z"
     )
     km.save_snapshot(snap)
-    
+
     # test load
     snaps = km.load_snapshots()
     assert len(snaps) == 1
@@ -44,7 +45,7 @@ def test_kpi_snapshot_comparison(workspace):
     snap2 = KPISnapshot("s2", "k1", "Test", "v2", 110, "2026-10-09")
     km.save_snapshot(snap1)
     km.save_snapshot(snap2)
-    
+
     snaps = km.load_snapshots()
     assert len(snaps) == 2
     assert snaps[1].value > snaps[0].value
@@ -149,3 +150,100 @@ def test_kpi_manager_kpi_methods_intact(workspace):
     assert loaded[0].kpi_name == "Total Revenue"
     assert km.get_kpi_by_name("Total Revenue") is not None
     assert km.get_kpi_by_name("Nonexistent") is None
+
+def test_calculate_kpi_value_distinct_count_ratio_and_errors(workspace):
+    import pandas as pd
+    from src.kpi_engine import KPIRecommendation
+    from src.sql_engine import DuckDBEngine
+
+    # Create test data: 4 rows, customer_id has 2 unique values, profit and sales
+    df = pd.DataFrame({
+        "order_id": [101, 102, 103, 104],
+        "customer_id": [1, 1, 2, 2],
+        "sales": [100.0, 200.0, 300.0, 400.0],
+        "profit": [20.0, 40.0, 60.0, 80.0]
+    })
+    path_csv = workspace.project_root / "orders.csv"
+    df.to_csv(path_csv, index=False)
+    workspace.discover_datasets()
+
+    km = KPIManager(workspace)
+
+    # 1. Test DISTINCTCOUNT - must be 2, not 4 (len(df))
+    kpi_distinct = KPIRecommendation(
+        kpi_name="Unique Customers",
+        category="Transaction",
+        priority="HIGH",
+        status="AVAILABLE",
+        required_columns=["customer_id"],
+        available_columns=["customer_id"],
+        calculation_logic="DISTINCTCOUNT(customer_id)",
+        explanation="Counts distinct customers"
+    )
+    val_distinct, status = km.calculate_kpi_value(kpi_distinct)
+    assert status == "SUCCESS"
+    assert val_distinct == 2.0  # NOT 4.0!
+
+    # 2. Test Ratio: SUM(profit) / SUM(sales) = 200 / 1000 = 0.2
+    kpi_ratio = KPIRecommendation(
+        kpi_name="Profit Margin",
+        category="Ratio",
+        priority="HIGH",
+        status="AVAILABLE",
+        required_columns=["profit", "sales"],
+        available_columns=["profit", "sales"],
+        calculation_logic="SUM(profit) / SUM(sales)",
+        explanation="Profit ratio"
+    )
+    val_ratio, status = km.calculate_kpi_value(kpi_ratio)
+    assert status == "SUCCESS"
+    assert val_ratio == 0.2  # NOT 200.0 (profit alone)!
+
+    # 3. Test Unsupported / missing column - must return error status, not a number
+    kpi_missing = KPIRecommendation(
+        kpi_name="Invalid KPI",
+        category="Aggregation",
+        priority="LOW",
+        status="AVAILABLE",
+        required_columns=["nonexistent_col"],
+        available_columns=["nonexistent_col"],
+        calculation_logic="SUM(nonexistent_col)",
+        explanation="Invalid"
+    )
+    val_missing, err_status = km.calculate_kpi_value(kpi_missing)
+    assert val_missing is None
+    assert "not found" in err_status.lower()
+
+    # 4. Test UNAVAILABLE status
+    kpi_unavail = KPIRecommendation(
+        kpi_name="Unavailable KPI",
+        category="Aggregation",
+        priority="LOW",
+        status="UNAVAILABLE",
+        required_columns=["missing"],
+        available_columns=[],
+        calculation_logic="N/A",
+        explanation="Unavailable"
+    )
+    val_unavail, err_unavail = km.calculate_kpi_value(kpi_unavail)
+    assert val_unavail is None
+    assert "UNAVAILABLE" in err_unavail
+
+    # 5. Test Ratio with division by zero
+    df_zero = pd.DataFrame({"a": [10.0], "b": [0.0]})
+    df_zero.to_csv(workspace.project_root / "zero_tbl.csv", index=False)
+    workspace.discover_datasets()
+
+    kpi_div0 = KPIRecommendation(
+        kpi_name="DivZero",
+        category="Ratio",
+        priority="LOW",
+        status="AVAILABLE",
+        required_columns=["a", "b"],
+        available_columns=["a", "b"],
+        calculation_logic="SUM(a) / SUM(b)",
+        explanation="Zero div"
+    )
+    val_div0, err_div0 = km.calculate_kpi_value(kpi_div0)
+    assert val_div0 is None
+    assert "division by zero" in err_div0.lower()

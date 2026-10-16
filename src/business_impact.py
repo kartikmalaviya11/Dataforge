@@ -17,8 +17,15 @@ class BusinessImpact:
     created_at: str = ""
 
 class BusinessImpactManager:
-    def __init__(self, persistence_dir: str = ".dataforge/business_impact"):
-        self.persistence_dir = persistence_dir
+    def __init__(self, persistence_dir: Any = ".dataforge/business_impact"):
+        from pathlib import Path
+        if hasattr(persistence_dir, "project_root"):
+            p = Path(persistence_dir.project_root) / ".dataforge" / "business_impact"
+        else:
+            p = Path(persistence_dir)
+            if not str(p).replace('\\', '/').endswith("business_impact"):
+                p = p / ".dataforge" / "business_impact"
+        self.persistence_dir = str(p)
         os.makedirs(self.persistence_dir, exist_ok=True)
         self.impacts: Dict[str, BusinessImpact] = {}
         self.load()
@@ -48,10 +55,15 @@ class BusinessImpactManager:
             affected_kpi=affected_kpi,
             business_impact_description=description,
             evidence=evidence,
-            created_at=datetime.utcnow().isoformat()
+            created_at=datetime.now().isoformat()
         )
         self.save()
         return issue_id
+
+    def register_impact(self, impact: BusinessImpact) -> str:
+        self.impacts[impact.issue_id] = impact
+        self.save()
+        return impact.issue_id
 
     def update_status(self, issue_id: str, status: str):
         i = self.impacts.get(issue_id)

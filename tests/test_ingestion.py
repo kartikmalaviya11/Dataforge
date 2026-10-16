@@ -93,6 +93,13 @@ class TestLoadDataset:
         with pytest.raises(IngestionError):
             load_dataset(file_path)
 
+    def test_legacy_xls_safe_error_when_xlrd_missing(self, tmp_path):
+        # Genuine legacy OLE2 .xls header bytes
+        xls_file = tmp_path / "legacy.xls"
+        xls_file.write_bytes(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 512)
+        with pytest.raises(IngestionError, match="Legacy Excel \\(.xls\\) format is not supported"):
+            load_dataset(xls_file)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

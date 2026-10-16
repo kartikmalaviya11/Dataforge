@@ -126,3 +126,21 @@ def test_original_files_unchanged(workspace_env):
     
     assert file_path.read_bytes() == orig_content
     assert file_path.stat().st_mtime == orig_mtime
+
+def test_corrupt_project_config_preserves_backup(tmp_path):
+    # Test that corrupt project_config.json is preserved as .bak before being overwritten
+    config_path = tmp_path / "project_config.json"
+    corrupt_content = '{"project_name": "Broken", "tables": { MALFORMED JSON HERE '
+    config_path.write_text(corrupt_content, encoding="utf-8")
+
+    ws = ProjectWorkspace.load(tmp_path)
+    assert ws is not None
+
+    bak_path = tmp_path / "project_config.corrupted.bak"
+    assert bak_path.exists()
+    assert bak_path.read_text(encoding="utf-8") == corrupt_content
+
+    # The new config was cleanly saved
+    assert config_path.exists()
+    new_data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "project_name" in new_data

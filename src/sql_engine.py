@@ -40,6 +40,7 @@ class DuckDBEngine:
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 
                 cache_path = cache_dir / f"{table_name}.parquet"
+                meta_path = cache_dir / f"{table_name}.meta.json"
                 
                 # Check invalidation (size and mtime)
                 current_mtime = file_path.stat().st_mtime
@@ -47,24 +48,34 @@ class DuckDBEngine:
                 
                 # Need to update if missing or if metadata diverges
                 needs_update = True
-                if cache_path.exists():
+                if cache_path.exists() and cache_path.stat().st_size > 0:
                     try:
-                        # Stored metadata could be managed better, but for simplicity we rely on file's own mtime
-                        # and we'll check if the cache is older than the original file
-                        if cache_path.stat().st_mtime >= current_mtime:
+                        if meta_path.exists():
+                            with open(meta_path, "r") as mf:
+                                meta = json.load(mf)
+                            if meta.get("mtime") == current_mtime and meta.get("size") == current_size:
+                                needs_update = False
+                        elif cache_path.stat().st_mtime >= current_mtime:
                             needs_update = False
-                    except:
-                        pass
+                    except Exception:
+                        needs_update = True
                 
                 if needs_update:
                     # Read via pandas once
                     df = pd.read_excel(file_path)
-                    # Convert object columns to string to avoid DuckDB parquet issues
+                    # Convert object columns preserving NULL/NA values (avoiding literal 'nan' or 'None')
                     for col in df.columns:
                         if df[col].dtype == 'object':
-                            df[col] = df[col].astype(str)
+                            mask = df[col].notna()
+                            df[col] = df[col].where(mask, None)
+                            df.loc[mask, col] = df.loc[mask, col].astype(str)
                     
                     df.to_parquet(cache_path)
+                    try:
+                        with open(meta_path, "w") as mf:
+                            json.dump({"mtime": current_mtime, "size": current_size}, mf)
+                    except Exception:
+                        pass
                     
                 safe_cache_path = str(cache_path).replace("'", "''")
                 self.conn.execute(f"""

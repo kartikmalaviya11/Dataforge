@@ -53,6 +53,16 @@ class FeatureBuilder:
         return True
 
     @staticmethod
+    def _is_numeric_literal(val: Any) -> bool:
+        if isinstance(val, (int, float)):
+            return True
+        try:
+            float(str(val).strip())
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
     def build_date_difference(feature_name: str, source_table: str, start_col: str, end_col: str, unit: str) -> FeatureDefinition:
         if unit.lower() not in ['day', 'month', 'year']:
             raise ValueError("Unsupported date unit.")
@@ -144,9 +154,11 @@ class FeatureBuilder:
         if not FeatureBuilder._is_safe_col_or_val(col1) or not FeatureBuilder._is_safe_col_or_val(col2):
             raise ValueError("Malicious or invalid operands.")
             
-        # Is operand a column or a literal?
-        c1 = FeatureBuilder._quote(col1) if col1.replace('_', '').isalpha() else col1
-        c2 = FeatureBuilder._quote(col2) if col2.replace('_', '').isalpha() else col2
+        is_num1 = FeatureBuilder._is_numeric_literal(col1)
+        is_num2 = FeatureBuilder._is_numeric_literal(col2)
+
+        c1 = str(col1).strip() if is_num1 else FeatureBuilder._quote(col1)
+        c2 = str(col2).strip() if is_num2 else FeatureBuilder._quote(col2)
         
         if op == '/':
             # Safe division
@@ -155,8 +167,10 @@ class FeatureBuilder:
             expr = f"({c1} {op} {c2})"
             
         cols = []
-        if col1.replace('_', '').isalpha(): cols.append(col1)
-        if col2.replace('_', '').isalpha(): cols.append(col2)
+        if not is_num1:
+            cols.append(col1)
+        if not is_num2:
+            cols.append(col2)
             
         return FeatureDefinition(
             feature_id=str(uuid.uuid4()),

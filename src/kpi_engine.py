@@ -105,16 +105,29 @@ class KPIEngine:
         return roles
 
     def _calculate_defect_rates(self, issues: List[StandardizedIssue], total_rows: int) -> Dict[str, float]:
-        """Calculate the defect rate for each column."""
-        if total_rows == 0:
+        """Calculate the defect rate for each column based on unique affected records."""
+        if total_rows <= 0:
             return {}
             
-        col_issue_counts = {}
+        from collections import defaultdict
+        col_affected_rows = defaultdict(set)
+        col_unindexed_count = defaultdict(int)
+
         for issue in issues:
             if issue.column:
-                col_issue_counts[issue.column] = col_issue_counts.get(issue.column, 0) + 1
-                
-        return {col: (count / total_rows) for col, count in col_issue_counts.items()}
+                if issue.row_index is not None:
+                    col_affected_rows[issue.column].add(issue.row_index)
+                else:
+                    col_unindexed_count[issue.column] += 1
+
+        all_cols = set(col_affected_rows.keys()).union(col_unindexed_count.keys())
+        defect_rates = {}
+        for col in all_cols:
+            unique_rows = len(col_affected_rows[col])
+            total_affected = min(total_rows, unique_rows + col_unindexed_count[col])
+            defect_rates[col] = total_affected / total_rows
+
+        return defect_rates
 
     def _evaluate_kpi(
         self,
@@ -402,7 +415,11 @@ class SQLValidator:
         conds = []
         for f in filters:
             op = "=" if f.operator == "==" else f.operator
-            val = f"'{f.value}'" if isinstance(f.value, str) else str(f.value)
+            if isinstance(f.value, str):
+                escaped = f.value.replace("'", "''")
+                val = f"'{escaped}'"
+            else:
+                val = str(f.value)
             conds.append(f'"{f.column}" {op} {val}')
         return " WHERE " + " AND ".join(conds)
 
@@ -433,19 +450,45 @@ class PandasValidator:
         conds = []
         for f in filters:
             op = "=" if f.operator == "==" else f.operator
-            val = f"'{f.value}'" if isinstance(f.value, str) else str(f.value)
+            if isinstance(f.value, str):
+                escaped = f.value.replace("'", "''")
+                val = f"'{escaped}'"
+            else:
+                val = str(f.value)
             conds.append(f'"{f.column}" {op} {val}')
         return " WHERE " + " AND ".join(conds)
         
     def calculate(self, metric: MetricDefinition) -> Any:
-        where_clause = self._build_where(metric.filters)
-        q = f'SELECT "{metric.source_column}" FROM "{metric.source_table}"{where_clause}'
+        cols = [metric.source_column]
+        if metric.filters:
+            for f in metric.filters:
+                if f.column not in cols:
+                    cols.append(f.column)
+        cols_sql = ", ".join([f'"{c}"' for c in cols])
+        q = f'SELECT {cols_sql} FROM "{metric.source_table}"'
         
         try:
             df = self.engine.conn.execute(q).df()
         except Exception as e:
             raise TypeError(str(e))
             
+        if metric.filters:
+            for f in metric.filters:
+                op = f.operator
+                col = f.column
+                if op in ("==", "="):
+                    df = df[df[col] == f.value]
+                elif op == "!=":
+                    df = df[df[col] != f.value]
+                elif op == ">":
+                    df = df[df[col] > f.value]
+                elif op == ">=":
+                    df = df[df[col] >= f.value]
+                elif op == "<":
+                    df = df[df[col] < f.value]
+                elif op == "<=":
+                    df = df[df[col] <= f.value]
+
         if df.empty:
             if metric.operation in ("COUNT", "COUNT_DISTINCT"):
                 return 0
@@ -580,6 +623,160 @@ class KPIManager:
                 return s
         return None
 
+    def calculate_kpi_value(self, kpi: Any, ws: Any = None) -> Tuple[Optional[float], str]:
+        """
+        Calculates the KPI value using actual formula/metric logic.
+        Does NOT approximate distinct counts or ratios from a single column alone.
+        Returns (value, status_or_error_message).
+        If unsupported or calculation fails, returns (None, error_description).
+        """
+        workspace = ws or self.workspace
+
+        # 1. If KPI is marked UNAVAILABLE or calculation_logic is N/A
+        status_attr = getattr(kpi, "status", None)
+        if status_attr == "UNAVAILABLE":
+            return None, "KPI is marked UNAVAILABLE due to missing requirements"
+
+        # 2. Case A: KPIDefinition (has metric_definitions)
+        metric_defs = getattr(kpi, "metric_definitions", None)
+        if metric_defs:
+            from src.sql_engine import DuckDBEngine
+            engine = DuckDBEngine(workspace)
+            val_results = {}
+            for m in metric_defs:
+                try:
+                    q_col = f'"{m.source_column}"'
+                    if m.operation in ("COUNT_DISTINCT", "DISTINCTCOUNT"):
+                        op_expr = f'COUNT(DISTINCT {q_col})'
+                    elif m.operation in ("COUNT", "SUM", "AVG", "MIN", "MAX"):
+                        op_expr = f'{m.operation}({q_col})'
+                    else:
+                        return None, f"Unsupported metric operation: {m.operation}"
+
+                    where = ""
+                    if m.filters:
+                        conds = []
+                        for f in m.filters:
+                            op = "=" if f.operator == "==" else f.operator
+                            clean_val = str(f.value).replace("'", "''")
+                            val_str = f"'{clean_val}'" if isinstance(f.value, str) else str(f.value)
+                            conds.append(f'"{f.column}" {op} {val_str}')
+                        where = " WHERE " + " AND ".join(conds)
+
+                    q = f'SELECT {op_expr} FROM "{m.source_table}"{where}'
+                    res = engine.conn.execute(q).fetchone()[0]
+                    if res is None:
+                        val_results[m.metric_name] = 0.0 if "COUNT" in m.operation else None
+                    else:
+                        val_results[m.metric_name] = float(res)
+                except Exception as ex:
+                    return None, f"Calculation failed for metric {m.metric_name}: {ex}"
+
+            formula = getattr(kpi, "formula", "") or ""
+            if formula and all(m.metric_name in formula for m in metric_defs):
+                try:
+                    eval_expr = formula
+                    for m_name, m_val in val_results.items():
+                        if m_val is None:
+                            return None, f"Metric {m_name} returned null"
+                        eval_expr = eval_expr.replace(m_name, str(m_val))
+                    if not re.match(r'^[0-9\.\s\+\-\*\/\(\)]+$', eval_expr):
+                        return None, f"Unsupported characters in formula: {formula}"
+                    res_val = float(eval(eval_expr, {"__builtins__": None}, {}))
+                    return round(res_val, 4), "SUCCESS"
+                except ZeroDivisionError:
+                    return None, "Division by zero in formula"
+                except Exception as ex:
+                    return None, f"Formula evaluation error: {ex}"
+            elif len(metric_defs) == 1:
+                val = list(val_results.values())[0]
+                return (round(val, 4) if val is not None else None), "SUCCESS"
+
+        # 3. Case B: KPIRecommendation or object with calculation_logic
+        calc_logic = getattr(kpi, "calculation_logic", None)
+        if not calc_logic or calc_logic.strip() in ("", "N/A"):
+            return None, "Missing or N/A calculation logic"
+
+        calc_str = calc_logic.strip()
+        if " grouped by " in calc_str.lower():
+            return None, "Grouped calculation logic is not supported for single-value snapshot"
+
+        from src.sql_engine import DuckDBEngine
+        engine = DuckDBEngine(workspace)
+
+        def _eval_agg(func: str, col_raw: str) -> Tuple[Optional[float], Optional[str]]:
+            col = col_raw.strip().strip("[]").strip('"')
+            target_tbl = None
+            if hasattr(workspace, "registry"):
+                for tname in workspace.registry.keys():
+                    try:
+                        cols = [desc[0] for desc in engine.conn.execute(f'DESCRIBE "{tname}"').fetchall()]
+                        if col in cols:
+                            target_tbl = tname
+                            break
+                    except Exception:
+                        pass
+            if not target_tbl:
+                try:
+                    tbls = [r[0] for r in engine.conn.execute("SHOW TABLES").fetchall()]
+                    for t in tbls:
+                        cols = [desc[0] for desc in engine.conn.execute(f'DESCRIBE "{t}"').fetchall()]
+                        if col in cols:
+                            target_tbl = t
+                            break
+                except Exception:
+                    pass
+
+            if not target_tbl:
+                return None, f"Column '{col}' not found in workspace"
+
+            q_col = f'"{col}"'
+            func_up = func.upper()
+            if func_up in ("COUNT_DISTINCT", "DISTINCTCOUNT"):
+                sql = f'SELECT COUNT(DISTINCT {q_col}) FROM "{target_tbl}"'
+            elif func_up in ("COUNT", "SUM", "AVERAGE", "AVG", "MIN", "MAX"):
+                sql_func = "AVG" if func_up == "AVERAGE" else func_up
+                sql = f'SELECT {sql_func}({q_col}) FROM "{target_tbl}"'
+            else:
+                return None, f"Unsupported aggregate function: {func}"
+
+            try:
+                res = engine.conn.execute(sql).fetchone()[0]
+                if res is None:
+                    return (0.0 if "COUNT" in func_up else None), None
+                return float(res), None
+            except Exception as e:
+                return None, str(e)
+
+        # Parse ratio: A / B
+        if " / " in calc_str:
+            parts = calc_str.split(" / ", 1)
+            m1 = re.match(r'^([A-Z_]+)\(([^)]+)\)$', parts[0].strip(), re.IGNORECASE)
+            m2 = re.match(r'^([A-Z_]+)\(([^)]+)\)$', parts[1].strip(), re.IGNORECASE)
+            if not m1 or not m2:
+                return None, f"Unsupported ratio formula syntax: {calc_str}"
+            val1, err1 = _eval_agg(m1.group(1), m1.group(2))
+            if err1:
+                return None, err1
+            val2, err2 = _eval_agg(m2.group(1), m2.group(2))
+            if err2:
+                return None, err2
+            if val1 is None or val2 is None:
+                return None, "Operand returned NULL"
+            if val2 == 0:
+                return None, "Division by zero in ratio"
+            return round(val1 / val2, 4), "SUCCESS"
+
+        # Parse single aggregation: FUNC(col)
+        m = re.match(r'^([A-Z_]+)\(([^)]+)\)$', calc_str, re.IGNORECASE)
+        if m:
+            val, err = _eval_agg(m.group(1), m.group(2))
+            if err:
+                return None, err
+            return (round(val, 4) if val is not None else None), "SUCCESS"
+
+        return None, f"Unsupported calculation format: {calc_str}"
+
     def compare_snapshots(self, snap_a: Any, snap_b: Any) -> Dict[str, Any]:
         """
         Compare two KPI snapshots.
@@ -676,10 +873,29 @@ class KPIManager:
 
 class KPISemanticChecker:
     def check_consistency(self, metric: MetricDefinition) -> Dict[str, Any]:
-        where = f" WHERE {' AND '.join([f'{f.column} {f.operator} {f.value}' for f in metric.filters])}" if metric.filters else ""
+        where_conds = []
+        if metric.filters:
+            for f in metric.filters:
+                op = "=" if f.operator == "==" else f.operator
+                if isinstance(f.value, str):
+                    escaped = f.value.replace("'", "''")
+                    val = f"'{escaped}'"
+                else:
+                    val = str(f.value)
+                where_conds.append(f'"{f.column}" {op} {val}')
+        where = f" WHERE {' AND '.join(where_conds)}" if where_conds else ""
         sql_rep = f"{metric.operation}({metric.source_column}) FROM {metric.source_table}{where}"
         
-        pd_rep = f"df['{metric.source_column}'].{metric.operation.lower()}()"
+        if metric.filters:
+            pd_conds = []
+            for f in metric.filters:
+                val_repr = repr(f.value) if isinstance(f.value, str) else str(f.value)
+                op_pd = "==" if f.operator in ("=", "==") else f.operator
+                pd_conds.append(f"(df['{f.column}'] {op_pd} {val_repr})")
+            filter_expr = " & ".join(pd_conds)
+            pd_rep = f"df[{filter_expr}]['{metric.source_column}'].{metric.operation.lower()}()"
+        else:
+            pd_rep = f"df['{metric.source_column}'].{metric.operation.lower()}()"
         
         pbi_rep = f"{metric.operation}('{metric.source_table}'[{metric.source_column}]){where}"
         

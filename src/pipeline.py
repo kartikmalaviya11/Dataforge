@@ -85,7 +85,7 @@ def run_pipeline(uploaded_file, rules_yaml_path):
 
         
 
-        if excel_issues and Path(uploaded_file.name).suffix.lower() in [".xlsx", ".xls"]:
+        if Path(uploaded_file.name).suffix.lower() in [".xlsx", ".xls"] and excel_eng is not None:
 
             if excel_eng.has_formulas_or_merges:
 

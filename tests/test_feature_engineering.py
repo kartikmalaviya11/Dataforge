@@ -134,6 +134,40 @@ def test_feature_arithmetic(workspace_with_data):
     assert df.loc[0, "freight_ratio"] == 0.1 # 10 / 100
     assert pd.isna(df.loc[3, "freight_ratio"]) # 5 / 0 -> NULL
 
+def test_feature_arithmetic_with_spaces_and_digits(tmp_path):
+    # Regression test for column names with spaces and digits (e.g. 'Unit Price', 'sales_2024')
+    ws = ProjectWorkspace(tmp_path)
+    csv_path = tmp_path / "pricing.csv"
+    csv_path.write_text("id,Unit Price,sales_2024\n1,50.0,2\n2,25.0,4\n")
+    ws.registry["pricing"] = TableRegistryEntry(
+        table_name="pricing", file_name="pricing.csv", file_path=str(csv_path), file_type="csv",
+        row_count=2, column_count=3, status="LOADED", last_modified=1000.0
+    )
+
+    sql_engine = DuckDBEngine(ws)
+    fe_engine = FeatureEngine(sql_engine, ws)
+
+    # Arithmetic between columns with spaces and digits
+    feat = FeatureBuilder.build_arithmetic("total_revenue", "pricing", "Unit Price", "*", "sales_2024")
+    assert feat.source_columns == ["Unit Price", "sales_2024"]
+    assert '"Unit Price"' in feat.expression
+    assert '"sales_2024"' in feat.expression
+
+    fe_engine.create_feature(feat)
+
+    # Arithmetic with literal number
+    feat_lit = FeatureBuilder.build_arithmetic("discounted_price", "pricing", "Unit Price", "*", "0.9")
+    assert feat_lit.source_columns == ["Unit Price"]
+    assert '"Unit Price"' in feat_lit.expression
+    assert '0.9' in feat_lit.expression
+
+    fe_engine.create_feature(feat_lit)
+
+    res = sql_engine.execute_query('SELECT total_revenue, discounted_price FROM "pricing" ORDER BY id')
+    assert list(res["total_revenue"]) == [100.0, 100.0]
+    assert list(res["discounted_price"]) == [45.0, 22.5]
+    sql_engine.close()
+
 def test_feature_bucket_category(workspace_with_data):
     sql_engine = DuckDBEngine(workspace_with_data)
     fe_engine = FeatureEngine(sql_engine, workspace_with_data)

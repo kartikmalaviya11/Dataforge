@@ -168,6 +168,20 @@ class ModelGenerator:
                 pk = c_name
                 break
                 
+        if not pk and hasattr(self, "data_model") and self.data_model and hasattr(self.data_model, "relationships"):
+            for r in self.data_model.relationships:
+                status = getattr(r.status, "value", str(r.status)).upper()
+                if status != "ACCEPTED":
+                    continue
+                if r.target_table == t_name and r.cardinality in ("N:1", "1:1"):
+                    pk = r.target_column
+                    is_dim_signal = True
+                    break
+                elif r.source_table == t_name and r.cardinality in ("1:N", "1:1"):
+                    pk = r.source_column
+                    is_dim_signal = True
+                    break
+
         # Check numeric measures
         has_numeric_metrics = False
         numeric_count = sum(1 for c_name, c in table.columns.items() if c.type in ('int', 'float', 'integer', 'double', 'numeric', 'decimal') and c_name != pk and not c_name.endswith('ID'))

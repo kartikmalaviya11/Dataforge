@@ -147,6 +147,13 @@ class ProjectWorkspace:
                     workspace.registry[table_name] = TableRegistryEntry(**t_data)
             except Exception as e:
                 logger.error(f"Failed to load project config: {e}")
+                try:
+                    import shutil
+                    backup_path = root / "project_config.corrupted.bak"
+                    shutil.copy2(config_path, backup_path)
+                    logger.warning(f"Preserved corrupted config to {backup_path}")
+                except Exception as backup_err:
+                    logger.error(f"Failed to backup corrupt config: {backup_err}")
                 
         # Validate existing state
         workspace.refresh_registry()

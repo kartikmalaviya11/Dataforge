@@ -183,3 +183,48 @@ def test_ground_truth_aggregation(workspace_with_data):
     assert res.iloc[0]["s"] == 6
     assert res.iloc[0]["c"] == 3
     engine.close()
+
+def test_xlsx_null_handling_and_cache_invalidation(tmp_path):
+    project_root = tmp_path / "test_xlsx_proj"
+    project_root.mkdir()
+
+    # Create Excel file with missing values in object/string column
+    excel_path = project_root / "customers.xlsx"
+    df = pd.DataFrame({
+        "id": [1, 2, 3, 4],
+        "notes": ["Active", None, "Pending", float("nan")]
+    })
+    df.to_excel(excel_path, index=False)
+
+    ws = ProjectWorkspace(project_root)
+    ws.discover_datasets()
+    ws.save()
+
+    engine = DuckDBEngine(ws)
+    # Query with IS NULL - should find rows 2 and 4 (2 rows)
+    res_null = engine.execute_query('SELECT * FROM "customers" WHERE notes IS NULL ORDER BY id')
+    assert len(res_null) == 2
+    assert list(res_null["id"]) == [2, 4]
+
+    # Query with IS NOT NULL - should find rows 1 and 3 (2 rows)
+    res_not_null = engine.execute_query('SELECT * FROM "customers" WHERE notes IS NOT NULL ORDER BY id')
+    assert len(res_not_null) == 2
+    assert list(res_not_null["notes"]) == ["Active", "Pending"]
+    engine.close()
+
+    # Modify the excel file and verify cache invalidation
+    time.sleep(0.05)  # Ensure mtime tick if needed
+    df_new = pd.DataFrame({
+        "id": [1, 2, 3, 4, 5],
+        "notes": ["Active", "Fixed", "Pending", "Recovered", None]
+    })
+    df_new.to_excel(excel_path, index=False)
+
+    engine2 = DuckDBEngine(ws)
+    res_updated = engine2.execute_query('SELECT * FROM "customers" WHERE notes IS NULL')
+    assert len(res_updated) == 1
+    assert res_updated.iloc[0]["id"] == 5
+
+    res_all = engine2.execute_query('SELECT COUNT(*) as c FROM "customers"')
+    assert res_all.iloc[0]["c"] == 5
+    engine2.close()
