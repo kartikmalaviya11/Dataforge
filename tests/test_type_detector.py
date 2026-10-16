@@ -205,5 +205,62 @@ class TestFullDetection:
         assert detected["created"] == "Date"
 
 
+class TestBoundedSemanticSampling:
+    def test_semantic_sample_preserves_boundaries_and_size(self):
+        """Verify _get_semantic_inference_sample spans head, tail, and respects bounds."""
+        from src.type_detector import _get_semantic_inference_sample, DEFAULT_SEMANTIC_SAMPLE_SIZE
+
+        # Small series: returns all rows
+        small_s = pd.Series([f"val_{i}" for i in range(500)])
+        sample_small = _get_semantic_inference_sample(small_s)
+        assert len(sample_small) == 500
+
+        # Large series: 10,000 rows
+        large_s = pd.Series([f"row_{i}" for i in range(10000)])
+        sample_large = _get_semantic_inference_sample(large_s)
+        assert len(sample_large) == DEFAULT_SEMANTIC_SAMPLE_SIZE
+        # Must include the very first and very last non-null element
+        assert sample_large.iloc[0] == "row_0"
+        assert sample_large.iloc[-1] == "row_9999"
+        # Deterministic
+        sample_large_2 = _get_semantic_inference_sample(large_s)
+        assert sample_large.equals(sample_large_2)
+
+    def test_date_detection_boundary_and_mixed_cases(self):
+        """Verify behavior on dates at edges, mixed text, and ordinary city/state strings."""
+        from src.type_detector import is_date_semantic, detect_semantic_types
+        from src.profiler import profile_dataset
+        from src.quality_engine import run_quality_checks, ISSUE_INVALID_DATE
+
+        # 1. Ordinary city/state strings (e.g., Olist geolocation cities)
+        cities = pd.Series(["sao paulo", "rio de janeiro", "belo horizonte", "curitiba", "porto alegre"] * 1000)
+        assert not is_date_semantic(cities)
+
+        # 2. Date strings only near the beginning (50 dates, then 4,950 text rows)
+        dates_at_start = pd.Series(["2023-01-01"] * 50 + ["not_a_date"] * 4950)
+        assert not is_date_semantic(dates_at_start)
+
+        # 3. Date strings only near the end (4,950 text rows, then 50 dates)
+        dates_at_end = pd.Series(["not_a_date"] * 4950 + ["2023-01-01"] * 50)
+        assert not is_date_semantic(dates_at_end)
+
+        # 4. Valid dates throughout 5,000 rows
+        valid_dates = pd.Series([f"2023-01-{(i % 28) + 1:02d}" for i in range(5000)])
+        assert is_date_semantic(valid_dates)
+
+        # 5. Mixed dates (70% dates, 30% invalid text):
+        # Schema inference detects Date, but full-data quality checks flag every invalid row without skipping
+        mixed_vals = ["2023-01-15"] * 3500 + ["corrupt_date"] * 1500
+        df_mixed = pd.DataFrame({"order_date": mixed_vals})
+        profiles = profile_dataset(df_mixed)
+        results = detect_semantic_types(df_mixed, profiles)
+        assert results[0].detected_type == "Date"
+
+        # Crucial safeguard: quality scan on full data checks 100% of rows (all 1500 invalid rows flagged)
+        issues = run_quality_checks(df_mixed, profiles, results)
+        date_issues = [i for i in issues if i.issue_type == ISSUE_INVALID_DATE]
+        assert len(date_issues) == 1500, f"Expected 1500 invalid date issues on full data, got {len(date_issues)}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

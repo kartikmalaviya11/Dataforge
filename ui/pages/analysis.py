@@ -130,7 +130,7 @@ def render_feature_engineering(ws: 'ProjectWorkspace'):
 
     target_table = st.selectbox("Target Table", list(ws.registry.keys()), key="fe_table")
 
-    from src.feature_engineering import FeatureEngine, build_arithmetic, build_date_part
+    from src.feature_engineering import FeatureEngine, FeatureBuilder
     from src.sql_engine import DuckDBEngine
 
     fe = FeatureEngine(DuckDBEngine(ws), ws)
@@ -164,7 +164,7 @@ def render_feature_engineering(ws: 'ProjectWorkspace'):
                     st.error("Please provide a feature name.")
                     return
                 try:
-                    fd = build_arithmetic(feature_name, target_table, left_col, op, right_col)
+                    fd = FeatureBuilder.build_arithmetic(feature_name, target_table, left_col, op, right_col)
                     fe.create_feature(fd)
                     st.success(f"Feature '{feature_name}' created successfully.")
                 except Exception as e:
@@ -176,7 +176,7 @@ def render_feature_engineering(ws: 'ProjectWorkspace'):
         with col1:
             date_col = st.selectbox("Date Column", columns, key="fe_date_col")
         with col2:
-            unit = st.selectbox("Part to Extract", ["year", "month", "day", "hour", "minute"], key="fe_date_unit")
+            unit = st.selectbox("Part to Extract", ["year", "month", "quarter", "week"], key="fe_date_unit")
 
         if dataforge_button("Extract Date Part", type="primary"):
             def _do_action():
@@ -184,7 +184,7 @@ def render_feature_engineering(ws: 'ProjectWorkspace'):
                     st.error("Please provide a feature name.")
                     return
                 try:
-                    fd = build_date_part(feature_name, target_table, date_col, unit)
+                    fd = FeatureBuilder.build_date_part(feature_name, target_table, date_col, unit)
                     fe.create_feature(fd)
                     st.success(f"Feature '{feature_name}' created successfully.")
                 except Exception as e:

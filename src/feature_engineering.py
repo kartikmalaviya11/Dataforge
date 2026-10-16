@@ -360,3 +360,11 @@ class FeatureEngine:
         
         # 5. Apply
         self._apply_features_to_table(feature.source_table)
+
+
+# Module-level convenience aliases
+build_arithmetic = FeatureBuilder.build_arithmetic
+build_date_part = FeatureBuilder.build_date_part
+build_date_difference = FeatureBuilder.build_date_difference
+build_boolean_flag = FeatureBuilder.build_boolean_flag
+build_conditional_column = FeatureBuilder.build_conditional_column

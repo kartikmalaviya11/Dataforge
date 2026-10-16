@@ -38,13 +38,19 @@ class ValidationSnapshot:
     
     def __post_init__(self):
         self.issue_signatures = {}
+        counts: Dict[str, int] = {}
         for issue in self.issues:
-            sig = _compute_issue_signature(issue)
-            base_sig = sig
-            idx = 0
-            while sig in self.issue_signatures:
-                idx += 1
+            base_sig = _compute_issue_signature(issue)
+            if base_sig not in self.issue_signatures:
+                sig = base_sig
+                counts[base_sig] = 1
+            else:
+                idx = counts.get(base_sig, 1)
                 sig = f"{base_sig}_{idx}"
+                while sig in self.issue_signatures:
+                    idx += 1
+                    sig = f"{base_sig}_{idx}"
+                counts[base_sig] = idx + 1
             self.issue_signatures[sig] = issue
 
 @dataclass
