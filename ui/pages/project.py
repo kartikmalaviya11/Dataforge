@@ -679,7 +679,6 @@ def render_cleaning(ws: ProjectWorkspace):
         df = res["df"]
     else:
         df, _ = ws.load_table(selected_table)
-        res["df"] = df
 
     tab_auto, tab_impute, tab_drop = st.tabs(["Auto Repairs", "Impute Nulls", "Drop Column"])
 
@@ -876,12 +875,22 @@ def render_validation(ws: ProjectWorkspace):
 
     selected_table = st.selectbox("Select Table", list(ws.registry.keys()), key="val_table_select")
 
-    if "table_results" not in st.session_state or selected_table not in st.session_state.table_results:
+    scan_results = get_project_scan_results(ws)
+    if selected_table not in scan_results or scan_results[selected_table].get("scan_status") != "COMPLETED":
         empty_state("Table not scanned", f"Run a Data Quality Scan on {selected_table} first.", "Go to Data Quality", "Data Quality")
         return
 
-    res = st.session_state.table_results[selected_table]
-    df = res.get("repaired_df") if res.get("repaired_df") is not None else res.get("df")
+    res = scan_results[selected_table]
+    if res.get("repaired_df") is not None:
+        df = res["repaired_df"]
+    elif res.get("df") is not None:
+        df = res["df"]
+    else:
+        try:
+            df, _ = ws.load_table(selected_table)
+        except Exception as e:
+            st.error(f"Could not load data for table '{selected_table}': {e}")
+            return
 
     tab_snapshot, tab_pattern = st.tabs(["Validation Snapshot", "Custom Pattern Validation"])
 
@@ -899,6 +908,10 @@ def render_validation(ws: ProjectWorkspace):
             st.info("No validation snapshot found.")
 
     with tab_pattern:
+        if df is None or not hasattr(df, "columns"):
+            st.warning("No tabular data available for pattern validation.")
+            return
+
         col = st.selectbox("Select Column for Pattern Validation", df.columns.tolist(), key="pat_col")
         pattern = st.text_input("Regex Pattern", key="pat_regex")
 

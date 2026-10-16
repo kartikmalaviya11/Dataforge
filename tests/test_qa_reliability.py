@@ -18,7 +18,7 @@ from src.scoring import ReadinessScore
 from src.pipeline import run_pipeline
 from ui.pages.project import (
     normalize_severity, get_project_scan_results, compute_overview_status,
-    _store_scan_result, _store_failed_scan
+    _store_scan_result, _store_failed_scan, render_validation, render_cleaning
 )
 
 
@@ -296,3 +296,155 @@ def test_run_pipeline_memory_efficiency_no_raw_bytes(tmp_path):
         assert res["raw_bytes"] is None
         assert res["df"] is not None
         assert res["filesize"] == csv_file.stat().st_size
+
+
+# =====================================================================
+# 7. Validation Results & Custom Pattern with df=None & Project Isolation
+# =====================================================================
+
+def test_render_validation_with_none_df_and_lazy_load(tmp_path):
+    """
+    Verify:
+    1. render_validation correctly loads df lazily when res['df'] is None, without crashing.
+    2. res['df'] remains None (not written back to scan cache).
+    3. Custom Pattern column selectbox receives the table columns.
+    """
+    f = tmp_path / "orders.csv"
+    f.write_text("order_id,customer_name,amount\n1,Alice,100\n2,Bob,200\n", encoding="utf-8")
+
+    ws = ProjectWorkspace(tmp_path / "ws_val")
+    ws.project_root.mkdir(parents=True, exist_ok=True)
+    (ws.project_root / f.name).write_bytes(f.read_bytes())
+    ws.discover_datasets()
+
+    class DummyContext:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    selectbox_calls = []
+    def mock_sb(label, options, **kwargs):
+        selectbox_calls.append((label, list(options)))
+        return options[0] if options else None
+
+    with patch("streamlit.session_state", MockSessionState()) as mock_state:
+        # Store scan result with df=None
+        _store_scan_result(ws, "orders", {
+            "all_issues": [],
+            "readiness": None,
+            "proposals": [],
+        })
+        scan_res = get_project_scan_results(ws)["orders"]
+        assert scan_res["df"] is None
+        assert scan_res["scan_status"] == "COMPLETED"
+
+        with patch("streamlit.markdown"), \
+             patch("streamlit.selectbox", side_effect=mock_sb), \
+             patch("streamlit.tabs", return_value=[DummyContext(), DummyContext()]), \
+             patch("streamlit.text_input", return_value=""), \
+             patch("streamlit.button", return_value=False), \
+             patch("streamlit.info"), \
+             patch("streamlit.success"), \
+             patch("streamlit.warning"), \
+             patch("streamlit.error"), \
+             patch("streamlit.write"):
+
+            render_validation(ws)
+
+        # 1. Verify no crash and columns were passed to pattern validation selectbox
+        pattern_col_calls = [c for c in selectbox_calls if c[0] == "Select Column for Pattern Validation"]
+        assert len(pattern_col_calls) == 1
+        assert pattern_col_calls[0][1] == ["order_id", "customer_name", "amount"]
+
+        # 2. Verify res["df"] is STILL None (not cached back into scan result)
+        assert scan_res["df"] is None
+
+
+def test_render_validation_project_isolation(tmp_path):
+    """
+    Verify project switching does not let Validation display results from another project.
+    """
+    # Project A has scanned table 'orders'
+    f_a = tmp_path / "orders_a.csv"
+    f_a.write_text("id,val\n1,10\n", encoding="utf-8")
+    ws_a = ProjectWorkspace(tmp_path / "ws_a")
+    ws_a.project_root.mkdir(parents=True, exist_ok=True)
+    (ws_a.project_root / "orders.csv").write_bytes(f_a.read_bytes())
+    ws_a.discover_datasets()
+
+    # Project B also has table 'orders', but has NOT been scanned
+    f_b = tmp_path / "orders_b.csv"
+    f_b.write_text("id,val\n2,20\n", encoding="utf-8")
+    ws_b = ProjectWorkspace(tmp_path / "ws_b")
+    ws_b.project_root.mkdir(parents=True, exist_ok=True)
+    (ws_b.project_root / "orders.csv").write_bytes(f_b.read_bytes())
+    ws_b.discover_datasets()
+
+    with patch("streamlit.session_state", MockSessionState()) as mock_state:
+        # Project A scans 'orders'
+        _store_scan_result(ws_a, "orders", {
+            "all_issues": [],
+            "readiness": None,
+            "proposals": [],
+        })
+        assert "orders" in get_project_scan_results(ws_a)
+
+        # Switch to Project B
+        empty_states_called = []
+        def mock_empty_state(title, description, *args, **kwargs):
+            empty_states_called.append((title, description))
+
+        with patch("ui.pages.project.empty_state", side_effect=mock_empty_state), \
+             patch("streamlit.markdown"), \
+             patch("streamlit.selectbox", return_value="orders"):
+
+            render_validation(ws_b)
+
+        # Must report "Table not scanned" for Project B, not showing Project A's scan
+        assert len(empty_states_called) == 1
+        assert empty_states_called[0][0] == "Table not scanned"
+        assert "Run a Data Quality Scan on orders first" in empty_states_called[0][1]
+
+
+def test_render_cleaning_does_not_cache_df_in_scan_results(tmp_path):
+    """
+    Verify render_cleaning does not write lazily loaded DataFrame back to res['df'].
+    """
+    f = tmp_path / "orders.csv"
+    f.write_text("order_id,amount\n1,100\n", encoding="utf-8")
+
+    ws = ProjectWorkspace(tmp_path / "ws_clean")
+    ws.project_root.mkdir(parents=True, exist_ok=True)
+    (ws.project_root / f.name).write_bytes(f.read_bytes())
+    ws.discover_datasets()
+
+    class DummyContext:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("streamlit.session_state", MockSessionState()) as mock_state:
+        _store_scan_result(ws, "orders", {
+            "all_issues": [],
+            "readiness": None,
+            "proposals": [],
+        })
+        scan_res = get_project_scan_results(ws)["orders"]
+        assert scan_res["df"] is None
+
+        def mock_sb(label, options, **kwargs):
+            if "Table" in label:
+                return "orders"
+            return options[0] if options else None
+
+        with patch("streamlit.markdown"), \
+             patch("streamlit.selectbox", side_effect=mock_sb), \
+             patch("streamlit.tabs", return_value=[DummyContext(), DummyContext(), DummyContext()]), \
+             patch("streamlit.success"):
+
+            render_cleaning(ws)
+
+        # res['df'] must remain None
+        assert scan_res["df"] is None

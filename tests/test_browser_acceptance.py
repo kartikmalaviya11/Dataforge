@@ -476,4 +476,5 @@ class TestDataForgeBrowserAcceptance:
 
         # Switch to Date Part in Feature Type dropdown and verify options
         type_select = page.locator('div[data-testid="stSelectbox"]:has-text("Feature Type")')
+        type_select.wait_for(state="visible", timeout=15000)
         assert type_select.is_visible()
