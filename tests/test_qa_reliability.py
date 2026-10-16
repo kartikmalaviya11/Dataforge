@@ -629,3 +629,38 @@ def test_sql_engine_excel_parquet_numeric_preservation(tmp_path):
     assert res is not None
     assert abs(res["total"].iloc[0] - 60.75) < 1e-4
     engine.close()
+
+
+def test_sql_engine_excel_preserves_text_identifiers_and_aggregates_amount(tmp_path):
+    """
+    Verify Excel text columns with leading zeros (e.g. '00123', '00045') are preserved verbatim,
+    and numeric text in an Amount column can still be aggregated with SUM.
+    """
+    import openpyxl
+    from src.sql_engine import DuckDBEngine
+    from src.workspace import ProjectWorkspace
+
+    ws = ProjectWorkspace(tmp_path / "ws_leading_zeros")
+    ws.project_root.mkdir(parents=True, exist_ok=True)
+
+    excel_file = ws.project_root / "orders.xlsx"
+    wb = openpyxl.Workbook()
+    sheet = wb.active
+    sheet.append(["Code", "Amount", "Description"])
+    sheet.append(["00123", " 100.5 ", "First item"])
+    sheet.append(["00045", " 200.0 ", "Second item"])
+    sheet.append([None, " 50.25 ", "Third item"])
+    wb.save(excel_file)
+    ws.discover_datasets()
+
+    engine = DuckDBEngine(ws)
+    # 1. Verify text codes with leading zeros are preserved verbatim as strings
+    df_codes = engine.execute_query('SELECT "Code" FROM "orders" WHERE "Code" IS NOT NULL ORDER BY "Code"')
+    assert df_codes["Code"].tolist() == ["00045", "00123"]
+
+    # 2. Verify numeric text in Amount column can be aggregated with SUM directly
+    df_sum = engine.execute_query('SELECT SUM("Amount") as total FROM "orders"')
+    assert df_sum is not None
+    assert abs(df_sum["total"].iloc[0] - 350.75) < 1e-4
+
+    engine.close()
