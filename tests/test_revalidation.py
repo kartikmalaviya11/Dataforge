@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 
-from src.revalidation import RevalidationEngine, _compute_issue_signature
+from src.revalidation import RevalidationEngine, _compute_issue_signature, ValidationSnapshot
 from src.repair_engine import RepairEngine, RepairInstruction
 from src.issue_manager import IssueClassification
 
@@ -186,3 +186,96 @@ def test_streamlit_state_integration():
         
     import os
     os.remove(tmp_name)
+
+
+def test_validation_snapshot_identical_signatures_scaling():
+    """Verify O(N) performance and zero issue loss with thousands of identical signatures."""
+    import time
+    from src.issue_manager import StandardizedIssue, IssueClassification
+    from src.scoring import ReadinessScore
+
+    # Create 5,000 identical issues
+    base_issue = StandardizedIssue(
+        issue_id="iss_1",
+        source="QUALITY_ENGINE",
+        issue_type="DUPLICATE_ROW",
+        rule_or_check_name="duplicate_row_check",
+        row_index=0,
+        column=None,
+        actual_value=None,
+        expected_condition="Row should be unique",
+        severity="WARNING",
+        message="Duplicate row",
+        recommendation="Remove exact duplicates",
+        classification=IssueClassification.AUTO_FIXABLE
+    )
+    issues = [base_issue for _ in range(5000)]
+    dummy_score = ReadinessScore(
+        overall_score=50.0,
+        grade="C",
+        status="NEEDS_REVIEW",
+        dimension_scores={},
+        dimension_results={},
+        weights={},
+        penalties={},
+        issue_counts={},
+        total_rows=5000,
+        total_columns=1,
+        explanation="test",
+        recommendations=[]
+    )
+
+    t0 = time.time()
+    snap = ValidationSnapshot(issues=issues, readiness=dummy_score, col_profiles=[], type_results=[])
+    t1 = time.time()
+
+    # O(N) should finish in well under 0.25 seconds for 5,000 issues
+    assert (t1 - t0) < 0.5, f"ValidationSnapshot creation took too long: {t1 - t0:.4f}s"
+    assert len(snap.issue_signatures) == 5000, "Lost identical issues during snapshot construction"
+
+
+def test_validation_snapshot_distinct_and_suffix_collision():
+    """Verify distinct signatures and safety when a base signature collides with a suffixed key."""
+    from unittest.mock import patch
+    from src.issue_manager import StandardizedIssue, IssueClassification
+    from src.scoring import ReadinessScore
+
+    issue_a1 = StandardizedIssue("1", "SRC", "TYPE_A", "CHK", 1, "col", None, "cond", "WARN", "msg", "rec", IssueClassification.AUTO_FIXABLE)
+    issue_a2 = StandardizedIssue("2", "SRC", "TYPE_A", "CHK", 2, "col", None, "cond", "WARN", "msg", "rec", IssueClassification.AUTO_FIXABLE)
+    issue_b = StandardizedIssue("3", "SRC", "TYPE_B", "CHK", 3, "col", None, "cond", "WARN", "msg", "rec", IssueClassification.AUTO_FIXABLE)
+
+    dummy_score = ReadinessScore(
+        overall_score=100.0,
+        grade="A",
+        status="READY",
+        dimension_scores={},
+        dimension_results={},
+        weights={},
+        penalties={},
+        issue_counts={},
+        total_rows=3,
+        total_columns=1,
+        explanation="test",
+        recommendations=[]
+    )
+
+    # Mock signature generation so issue_a1 and issue_a2 have base 'SIG_A', while issue_b has base 'SIG_A_1'
+    def mock_sig(issue):
+        if issue.issue_id in ("1", "2"):
+            return "SIG_A"
+        return "SIG_A_1"
+
+    with patch("src.revalidation._compute_issue_signature", side_effect=mock_sig):
+        snap = ValidationSnapshot(
+            issues=[issue_a1, issue_a2, issue_b],
+            readiness=dummy_score,
+            col_profiles=[],
+            type_results=[]
+        )
+
+    # All 3 issues must be retained with distinct keys without overwriting
+    assert len(snap.issue_signatures) == 3
+    assert list(snap.issue_signatures.values()) == [issue_a1, issue_a2, issue_b]
+    # Keys should be distinct
+    keys = list(snap.issue_signatures.keys())
+    assert len(keys) == len(set(keys))

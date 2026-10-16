@@ -110,63 +110,43 @@ def render_data_import():
                 import uuid, hashlib
                 ws_path = Path(".dataforge_workspaces") / str(uuid.uuid4())
 
-                def _create_ws():
-                    ws_path.mkdir(parents=True, exist_ok=True)
-                    return ProjectWorkspace.load(ws_path)
+                ws = None
+                def _init_ws():
+                    nonlocal ws
+                    if ws is None:
+                        ws_path.mkdir(parents=True, exist_ok=True)
+                        ws = ProjectWorkspace(ws_path)
 
-                def _save_raw(ws):
-                    saved_count = 0
+                def _save_raw(w):
                     for f in active_files:
                         fb = f.getvalue()
-                        tp = ws.project_root / f.name
+                        tp = w.project_root / f.name
                         tp.write_bytes(fb)
-                        saved_count += 1
-                    return saved_count
 
-                def _verify_sha(ws):
+                def _verify_sha(w):
                     for f in active_files:
                         fb = f.getvalue()
                         hb = hashlib.sha256(fb).hexdigest()
-                        tp = ws.project_root / f.name
+                        tp = w.project_root / f.name
                         ha = hashlib.sha256(tp.read_bytes()).hexdigest()
                         if hb != ha: raise Exception(f"Integrity error for {f.name}: Byte match failed!")
 
-                def _discover(ws):
-                    ws.discover_datasets()
-
-                def _register(ws):
-                    # Handled implicitly by discover_datasets
-                    pass
-
-                def _load_profile(ws):
-                    for tn in list(ws.registry.keys()): ws.load_table(tn)
-
-                def _persist(ws):
-                    ws.discover_datasets()
-                    ws.save()
+                def _discover_and_register(w):
+                    w.discover_datasets()
+                    w.save()
 
                 def _prepare():
                     pass
-
-                # Combine into stages
-                # Note: run_action handles exceptions
-                ws = None
-                def runner():
-                    nonlocal ws
-                    ws = _create_ws()
-                    _save_raw(ws)
 
                 stages = [
                     ("Validate uploaded file objects", _validate_files),
                     ("Validate supported extensions", _validate_exts),
                     ("Validate duplicate filenames", _validate_dups),
-                    ("Create workspace", _create_ws),
-                    ("Save each raw file", runner),
+                    ("Create workspace", _init_ws),
+                    ("Save raw files", lambda: _save_raw(ws)),
                     ("Verify SHA-256 for each saved file", lambda: _verify_sha(ws)),
-                    ("Discover datasets", lambda: _discover(ws)),
-                    ("Register tables", lambda: _register(ws)),
-                    ("Load/profile tables where actually supported", lambda: _load_profile(ws)),
-                    ("Persist workspace", lambda: _persist(ws)),
+                    ("Discover and register datasets", lambda: _discover_and_register(ws)),
+                    ("Persist workspace", lambda: ws.save()),
                     ("Prepare Overview", _prepare),
                 ]
 
@@ -202,21 +182,165 @@ def render_data_import():
 
 import streamlit as st
 import json
+import time
 from pathlib import Path
 from src.workspace import ProjectWorkspace
 from ui.theme import badge, metric_card, logo_html, card
+from ui.components import dataforge_button, run_action, empty_state
+
+
+def normalize_severity(sev) -> str:
+    """Normalize severity values to standard ERROR, WARNING, INFO."""
+    if sev is None:
+        return "INFO"
+    val = getattr(sev, "value", str(sev)).upper()
+    if val in ("CRITICAL", "ERROR", "HIGH"):
+        return "ERROR"
+    if val in ("WARNING", "WARN", "MEDIUM", "LOW"):
+        return "WARNING"
+    return "INFO"
+
+
+def get_project_scan_results(ws: ProjectWorkspace) -> dict:
+    """
+    Returns scan results dictionary scoped to the current ProjectWorkspace.
+    Syncs with st.session_state.table_results so existing callers always see current project's results.
+    """
+    if "project_scan_results" not in st.session_state:
+        try:
+            st.session_state.project_scan_results = {}
+        except (AttributeError, TypeError):
+            st.session_state["project_scan_results"] = {}
+
+    key = str(ws.project_root.resolve())
+    try:
+        scans_dict = st.session_state.project_scan_results
+    except (AttributeError, TypeError):
+        scans_dict = st.session_state["project_scan_results"]
+
+    if key not in scans_dict:
+        scans_dict[key] = {}
+
+    # Sync table_results to point directly to current project's dictionary
+    try:
+        st.session_state.table_results = scans_dict[key]
+    except (AttributeError, TypeError):
+        st.session_state["table_results"] = scans_dict[key]
+    return scans_dict[key]
+
+
+def _store_scan_result(ws: ProjectWorkspace, table_name: str, res: dict):
+    """Stores scan summary for a table in current project, omitting heavy DataFrame copies."""
+    project_scans = get_project_scan_results(ws)
+    summary = dict(res)
+    summary["df"] = None  # Loaded on demand by Cleaning when needed
+    summary["scan_status"] = "COMPLETED"
+    summary["error_message"] = None
+    summary["scanned_at"] = time.time()
+    project_scans[table_name] = summary
+
+
+def _store_failed_scan(ws: ProjectWorkspace, table_name: str, error_msg: str):
+    """Records a scan failure for a table in current project."""
+    project_scans = get_project_scan_results(ws)
+    project_scans[table_name] = {
+        "scan_status": "FAILED",
+        "error_message": error_msg,
+        "all_issues": [],
+        "readiness": None,
+        "proposals": [],
+        "df": None,
+        "repaired_df": None,
+        "scanned_at": time.time()
+    }
+
+
+def compute_overview_status(ws: ProjectWorkspace, scan_results: dict):
+    """
+    Computes (quality_status, readiness_score_display, total_issues_count, rows_display).
+    Rules:
+    - Never shows fake 0% readiness when no scan exists; shows 'Not Scanned'.
+    - Never shows 'Ready' when severity model or classifications require review.
+    - Honors current project tables only.
+    """
+    tables_count = len(ws.registry) if ws.registry else 0
+    if tables_count == 0:
+        return "No Tables", "N/A", 0, "0"
+
+    # Compute row count display
+    total_rows = 0
+    any_none = False
+    all_none = True
+    for meta in ws.registry.values():
+        if hasattr(meta, 'row_count') and meta.row_count is not None:
+            total_rows += meta.row_count
+            all_none = False
+        else:
+            any_none = True
+
+    if all_none:
+        rows_display = "Pending"
+    elif any_none:
+        rows_display = f"{total_rows:,} (partial)"
+    else:
+        rows_display = f"{total_rows:,}"
+
+    # Check scanned tables for current project
+    completed_scans = {
+        tname: res for tname, res in scan_results.items()
+        if tname in ws.registry and res.get("scan_status") == "COMPLETED"
+    }
+    failed_scans = [
+        tname for tname, res in scan_results.items()
+        if tname in ws.registry and res.get("scan_status") == "FAILED"
+    ]
+
+    if not completed_scans and not failed_scans:
+        return "Not Scanned", "Not Scanned", 0, rows_display
+
+    if not completed_scans and failed_scans:
+        return "Blocked", "Failed", 0, rows_display
+
+    all_issues = []
+    scores = []
+    for res in completed_scans.values():
+        all_issues.extend(res.get("all_issues", []))
+        rd = res.get("readiness")
+        if rd and hasattr(rd, "overall_score"):
+            scores.append(rd.overall_score)
+
+    total_issues = len(all_issues)
+    has_error = any(normalize_severity(i.severity) == "ERROR" for i in all_issues)
+    has_warning = any(normalize_severity(i.severity) == "WARNING" for i in all_issues)
+    has_review_req = any(
+        getattr(getattr(i, "classification", None), "value", str(getattr(i, "classification", ""))) == "REVIEW_REQUIRED"
+        for i in all_issues
+    )
+
+    if failed_scans or has_error:
+        quality_status = "Blocked"
+    elif has_warning or has_review_req or total_issues > 0:
+        quality_status = "Needs Review"
+    elif len(completed_scans) == tables_count and total_issues == 0:
+        quality_status = "Ready"
+    else:
+        quality_status = "Partially Scanned"
+
+    if scores:
+        avg_score = sum(scores) / len(scores)
+        readiness_display = f"{avg_score:.0f}%"
+    else:
+        readiness_display = "Not Scanned"
+
+    return quality_status, readiness_display, total_issues, rows_display
+
 
 def render_overview(ws: ProjectWorkspace):
-    # Gather counts safely
+    scan_results = get_project_scan_results(ws)
+    quality_status, readiness_score, num_issues, rows_display = compute_overview_status(ws, scan_results)
+
     tables_count = len(ws.registry) if ws.registry else 0
 
-    total_rows = 0
-    if ws.registry:
-        for key, meta in ws.registry.items():
-            if hasattr(meta, 'row_count') and meta.row_count is not None:
-                total_rows += meta.row_count
-
-    # Load actual metadata relationships, KPIs, findings safely
     rel_count = 0
     kpi_count = 0
     find_count = 0
@@ -225,64 +349,31 @@ def render_overview(ws: ProjectWorkspace):
     if rel_path.exists():
         try:
             rel_count = len(json.loads(rel_path.read_text()))
-        except: pass
+        except Exception:
+            pass
 
     kpi_path = ws.project_root / '.dataforge' / 'kpis.json'
     if kpi_path.exists():
         try:
             kpi_count = len(json.loads(kpi_path.read_text()))
-        except: pass
+        except Exception:
+            pass
 
     find_path = ws.project_root / '.dataforge' / 'findings.json'
     if find_path.exists():
         try:
             find_count = len(json.loads(find_path.read_text()))
-        except: pass
-
-    # Readiness from Phase 10 snapshot or fallback
-    readiness_score = "0%"
-    hr_path = ws.project_root / '.dataforge' / 'readiness_snapshots.json'
-    if hr_path.exists():
-        try:
-            snaps = json.loads(hr_path.read_text())
-            if snaps:
-                readiness_score = f"{snaps[-1].get('overall_score', 0):.0f}%"
-        except: pass
-    elif st.session_state.get("table_results"):
-        # We can just show the first one or average them, but let's just pick the first available for now
-        first_table = list(st.session_state.table_results.values())[0]
-        if first_table.get("comparison_result"):
-            readiness_score = f"{first_table['comparison_result'].after_readiness}%"
-
-    issues_count = 0
-    quality_status = "Unknown"
-
-    if st.session_state.get("table_results"):
-        all_issues = []
-        for t_res in st.session_state.table_results.values():
-            all_issues.extend(t_res.get("all_issues", []))
-
-        issues_count = str(len(all_issues))
-        if any(i.severity == "ERROR" for i in all_issues):
-            quality_status = "Blocked"
-        elif any(i.severity == "WARNING" for i in all_issues):
-            quality_status = "Needs Review"
-        else:
-            quality_status = "Ready"
-    elif tables_count > 0:
-        quality_status = "Not Scanned"
-    else:
-        quality_status = "No Tables"
+        except Exception:
+            pass
 
     st.markdown("### Project Overview")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1: metric_card("Tables", str(tables_count))
-    with c2: metric_card("Rows", f"{total_rows:,}" if total_rows > 0 else "0")
+    with c2: metric_card("Rows", rows_display)
     with c3:
-        status_color = "success" if quality_status == "Ready" else ("error" if quality_status == "Blocked" else "warning")
+        status_color = "success" if quality_status == "Ready" else ("error" if quality_status == "Blocked" else "warning" if quality_status in ("Needs Review", "Partially Scanned") else "neutral")
         metric_card("Overall Quality", quality_status, status_color)
-    num_issues = int(issues_count) if isinstance(issues_count, (int, str)) and str(issues_count).isdigit() else 0
     issues_status = "error" if num_issues > 0 else ("success" if quality_status == "Ready" else "neutral")
     with c4: metric_card("Total Issues", str(num_issues), issues_status)
 
@@ -290,7 +381,7 @@ def render_overview(ws: ProjectWorkspace):
     with c5: metric_card("Relationships", str(rel_count), "success" if rel_count > 0 else "neutral")
     with c6: metric_card("KPIs Defined", str(kpi_count), "success" if kpi_count > 0 else "neutral")
     with c7: metric_card("Findings", str(find_count), "success" if find_count > 0 else "neutral")
-    with c8: metric_card("Readiness", readiness_score, "success" if readiness_score != "0%" else "neutral")
+    with c8: metric_card("Readiness", readiness_score, "success" if readiness_score.endswith("%") and readiness_score != "0%" else "neutral")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### Quick Actions")
@@ -310,6 +401,7 @@ def render_overview(ws: ProjectWorkspace):
         st.session_state.current_page = "SQL Workspace"
         st.rerun()
 
+
 def render_data_quality(ws: ProjectWorkspace):
     st.markdown("""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
@@ -317,62 +409,211 @@ def render_data_quality(ws: ProjectWorkspace):
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        selected_table = st.selectbox("Select Table", list(ws.registry.keys()))
-    with col2:
-        if st.button("Scan Table", type="primary", use_container_width=True):
-            entry = ws.registry[selected_table]
-            class LocalFileMock:
-                def __init__(self, path):
-                    from pathlib import Path
-                    self.path = Path(path)
-                    self.name = self.path.name
-                    self.size = self.path.stat().st_size
-                def getvalue(self):
-                    return self.path.read_bytes()
-            target_file = LocalFileMock(entry.file_path)
-            from src.pipeline import run_pipeline
-            def _do_scan():
-                from src.run_history import RunHistoryManager
-                rhm = RunHistoryManager(ws.project_root)
-                run_id = rhm.create_run()
-                rhm.update_run(run_id, {"cleaning_summary": {"operation": "Data Quality Scan"}})
-                try:
-                    s, e = run_pipeline(target_file, None)
-                    if not s: raise Exception(e)
-                    df = st.session_state.analysis_results["df"]
-                    from src.dataset_versioning import DatasetVersioningManager
-                    dvm = DatasetVersioningManager(ws.project_root)
-                    source_hash = dvm.compute_df_hash(df)
-                    schema_hash = dvm.compute_hash(str(list(df.columns)))
+    if not ws.registry:
+        empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
+        return
 
-                    # Avoid duplicate raw version if hash matches existing
-                    existing_versions = dvm.get_all_versions()
-                    vid = None
-                    for v in existing_versions:
-                        if v.version_type == "RAW" and v.source_hash == source_hash:
-                            vid = v.version_id
-                            break
-                    if not vid:
-                        vid = dvm.create_version("RAW", source_hash, len(df), 1, schema_hash, None, {}, column_count=len(df.columns))
-                    st.session_state.analysis_results["dataset_version_id"] = vid
-                    qs = st.session_state.analysis_results["readiness"].overall_score
-                    rhm.update_run(run_id, {"dataset_version_id": vid, "quality_score": qs})
-                    rhm.complete_run(run_id)
-                except Exception as ex:
-                    rhm.fail_run(run_id)
-                    raise ex
-            s, _ = run_action("Scanning Table", [("Running quality scan", _do_scan)])
-            if s:
-                if "table_results" not in st.session_state:
-                    st.session_state.table_results = {}
-                st.session_state.table_results[selected_table] = st.session_state.analysis_results
-                st.success("Scan completed.")
-                ws.mark_analyzed(selected_table)
+    scan_results = get_project_scan_results(ws)
+    table_list = list(ws.registry.keys())
 
-    if st.session_state.get("analysis_results"):
-        st.success("Results available in memory. View Issues for details.")
+    col_sel, col_btn1, col_btn2 = st.columns([3, 1.5, 1.5])
+    with col_sel:
+        selected_table = st.selectbox("Select Table", table_list, key="dq_table_select")
+    with col_btn1:
+        st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+        scan_single = st.button("Scan Selected Table", type="primary", use_container_width=True, key="btn_scan_selected")
+    with col_btn2:
+        st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+        scan_all = st.button("Scan All Tables", use_container_width=True, key="btn_scan_all")
+
+    # Single Table Scan Handler
+    if scan_single:
+        entry = ws.registry[selected_table]
+        from src.pipeline import run_pipeline
+        from src.run_history import RunHistoryManager
+        from src.dataset_versioning import DatasetVersioningManager
+
+        progress_placeholder = st.empty()
+        start_time = time.time()
+
+        def _update_stage(stage_name: str):
+            elapsed = time.time() - start_time
+            progress_placeholder.info(f"Scanning table **{selected_table}** [{stage_name}] — Elapsed: {elapsed:.1f}s")
+
+        rhm = RunHistoryManager(ws.project_root)
+        run_id = rhm.create_run()
+        rhm.update_run(run_id, {"cleaning_summary": {"operation": "Data Quality Scan", "table": selected_table}})
+        try:
+            _update_stage("Starting scan")
+            s, err = run_pipeline(entry.file_path, None, progress_callback=_update_stage)
+            if not s:
+                raise Exception(err)
+
+            res = st.session_state.analysis_results
+            df = res["df"]
+
+            dvm = DatasetVersioningManager(ws.project_root)
+            source_hash = dvm.compute_df_hash(df)
+            schema_hash = dvm.compute_hash(str(list(df.columns)))
+            existing_versions = dvm.get_all_versions()
+            vid = None
+            for v in existing_versions:
+                if v.version_type == "RAW" and v.source_hash == source_hash:
+                    vid = v.version_id
+                    break
+            if not vid:
+                vid = dvm.create_version("RAW", source_hash, len(df), 1, schema_hash, None, {}, column_count=len(df.columns))
+
+            res["dataset_version_id"] = vid
+            qs = res["readiness"].overall_score
+            rhm.update_run(run_id, {"dataset_version_id": vid, "quality_score": qs})
+            rhm.complete_run(run_id)
+
+            entry.row_count = res["profile"].row_count
+            entry.column_count = res["profile"].column_count
+            ws.mark_analyzed(selected_table)
+            _store_scan_result(ws, selected_table, res)
+
+            elapsed = time.time() - start_time
+            progress_placeholder.success(f"Scan completed for **{selected_table}** in {elapsed:.2f}s!")
+        except Exception as ex:
+            rhm.fail_run(run_id)
+            elapsed = time.time() - start_time
+            progress_placeholder.error(f"Scan failed for **{selected_table}** after {elapsed:.2f}s: {ex}")
+            _store_failed_scan(ws, selected_table, str(ex))
+
+    # Sequential Scan All Tables Handler
+    if scan_all:
+        from src.pipeline import run_pipeline
+        from src.run_history import RunHistoryManager
+        from src.dataset_versioning import DatasetVersioningManager
+
+        progress_bar = st.progress(0.0)
+        status_box = st.empty()
+        total_tables = len(table_list)
+        overall_start = time.time()
+        failures = []
+
+        for idx, tname in enumerate(table_list):
+            table_entry = ws.registry[tname]
+            t_start = time.time()
+            progress_bar.progress(idx / total_tables)
+
+            def _update_seq_stage(stage_name: str):
+                t_elapsed = time.time() - t_start
+                tot_elapsed = time.time() - overall_start
+                status_box.info(
+                    f"Table {idx + 1}/{total_tables}: **{tname}** [{stage_name}] | "
+                    f"Table elapsed: {t_elapsed:.1f}s | Total elapsed: {tot_elapsed:.1f}s"
+                )
+
+            rhm = RunHistoryManager(ws.project_root)
+            run_id = rhm.create_run()
+            rhm.update_run(run_id, {"cleaning_summary": {"operation": "Data Quality Scan", "table": tname}})
+            try:
+                _update_seq_stage("Starting scan")
+                s, err = run_pipeline(table_entry.file_path, None, progress_callback=_update_seq_stage)
+                if not s:
+                    raise Exception(err)
+
+                res = st.session_state.analysis_results
+                df = res["df"]
+
+                dvm = DatasetVersioningManager(ws.project_root)
+                source_hash = dvm.compute_df_hash(df)
+                schema_hash = dvm.compute_hash(str(list(df.columns)))
+                existing_versions = dvm.get_all_versions()
+                vid = None
+                for v in existing_versions:
+                    if v.version_type == "RAW" and v.source_hash == source_hash:
+                        vid = v.version_id
+                        break
+                if not vid:
+                    vid = dvm.create_version("RAW", source_hash, len(df), 1, schema_hash, None, {}, column_count=len(df.columns))
+
+                res["dataset_version_id"] = vid
+                qs = res["readiness"].overall_score
+                rhm.update_run(run_id, {"dataset_version_id": vid, "quality_score": qs})
+                rhm.complete_run(run_id)
+
+                table_entry.row_count = res["profile"].row_count
+                table_entry.column_count = res["profile"].column_count
+                ws.mark_analyzed(tname)
+                _store_scan_result(ws, tname, res)
+            except Exception as ex:
+                rhm.fail_run(run_id)
+                failures.append((tname, str(ex)))
+                _store_failed_scan(ws, tname, str(ex))
+                st.error(f"Failed scanning table **{tname}**: {ex}")
+
+        progress_bar.progress(1.0)
+        tot_elapsed = time.time() - overall_start
+        if failures:
+            status_box.warning(
+                f"Sequential scan completed in {tot_elapsed:.2f}s. "
+                f"{total_tables - len(failures)} succeeded, {len(failures)} failed."
+            )
+        else:
+            status_box.success(
+                f"All {total_tables} tables scanned successfully in {tot_elapsed:.2f}s!"
+            )
+
+    # Display Findings and Summary Metrics for selected_table immediately
+    res = scan_results.get(selected_table)
+    st.markdown("---")
+    st.markdown(f"### Table Quality Summary: `{selected_table}`")
+
+    if res is None:
+        entry = ws.registry[selected_table]
+        st.info(f"Table **{selected_table}** has not been scanned yet.")
+        f_size_mb = (Path(entry.file_path).stat().st_size / (1024 * 1024)) if Path(entry.file_path).exists() else 0
+        st.caption(f"Source file: `{entry.file_name}` ({f_size_mb:.2f} MB) • Status: Not Scanned")
+        return
+
+    if res.get("scan_status") == "FAILED":
+        st.error(f"Scan failed for **{selected_table}**: {res.get('error_message', 'Unknown error')}")
+        return
+
+    # Scan Completed
+    all_issues = res.get("all_issues", [])
+    readiness = res.get("readiness")
+    score_val = readiness.overall_score if readiness and hasattr(readiness, "overall_score") else 0.0
+    grade_val = readiness.grade if readiness and hasattr(readiness, "grade") else "N/A"
+    elapsed = res.get("elapsed", 0.0)
+
+    err_count = sum(1 for i in all_issues if normalize_severity(i.severity) == "ERROR")
+    warn_count = sum(1 for i in all_issues if normalize_severity(i.severity) == "WARNING")
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        metric_card("Total Issues", str(len(all_issues)), "error" if err_count > 0 else "warning" if warn_count > 0 else "success")
+    with m2:
+        metric_card("Errors / Critical", str(err_count), "error" if err_count > 0 else "neutral")
+    with m3:
+        metric_card("Warnings / Major", str(warn_count), "warning" if warn_count > 0 else "neutral")
+    with m4:
+        metric_card("Readiness Score", f"{score_val:.0f}% ({grade_val})", "success" if score_val >= 75 else "warning")
+    with m5:
+        metric_card("Scan Duration", f"{elapsed:.2f}s", "neutral")
+
+    # Issue Table
+    if all_issues:
+        st.markdown(f"#### Detected Issues ({len(all_issues)})")
+        issue_rows = []
+        for i in all_issues:
+            cls_name = getattr(getattr(i, "classification", None), "value", str(getattr(i, "classification", "UNSAFE_TO_FIX")))
+            issue_rows.append({
+                "Type": i.issue_type,
+                "Column": i.column or "DATASET",
+                "Severity": normalize_severity(i.severity),
+                "Classification": cls_name,
+                "Message": i.message
+            })
+        import pandas as pd
+        st.dataframe(pd.DataFrame(issue_rows), use_container_width=True, hide_index=True)
+    else:
+        st.success("No issues detected! Table is 100% clean and ready for analysis.")
+
 
 def render_issues(ws: ProjectWorkspace):
     st.markdown("""
@@ -386,28 +627,31 @@ def render_issues(ws: ProjectWorkspace):
 
     selected_table = st.selectbox("Select Table", list(ws.registry.keys()), key="issues_table_select")
 
-    if "table_results" not in st.session_state or selected_table not in st.session_state.table_results:
+    scan_results = get_project_scan_results(ws)
+    if selected_table not in scan_results or scan_results[selected_table].get("scan_status") != "COMPLETED":
         empty_state("Table not scanned", f"Run a Data Quality Scan on {selected_table} first.", "Go to Data Quality", "Data Quality")
         return
 
-    res = st.session_state.table_results[selected_table]
-    if not res.get("all_issues"):
+    res = scan_results[selected_table]
+    all_issues = res.get("all_issues", [])
+    if not all_issues:
         st.success("No issues found!")
         return
 
-    st.markdown(f"Found {len(res['all_issues'])} issues.")
+    st.markdown(f"Found {len(all_issues)} issues in table `{selected_table}`.")
     issue_data = []
-    for issue in res['all_issues']:
+    for issue in all_issues:
         issue_data.append({
             "Issue ID": issue.issue_id,
-            "Severity": issue.severity,
+            "Severity": normalize_severity(issue.severity),
             "Type": issue.issue_type,
-            "Column": issue.column,
+            "Column": issue.column or "DATASET",
             "Rows Affected": getattr(issue, "affected_count", 1 if getattr(issue, "row_index", None) is not None else 1),
             "Description": issue.message
         })
     import pandas as pd
     st.dataframe(pd.DataFrame(issue_data), use_container_width=True)
+
 
 def render_cleaning(ws: ProjectWorkspace):
     st.markdown('''
@@ -421,12 +665,20 @@ def render_cleaning(ws: ProjectWorkspace):
 
     selected_table = st.selectbox("Select Table", list(ws.registry.keys()), key="cleaning_table_select")
 
-    if "table_results" not in st.session_state or selected_table not in st.session_state.table_results:
+    scan_results = get_project_scan_results(ws)
+    if selected_table not in scan_results or scan_results[selected_table].get("scan_status") != "COMPLETED":
         empty_state("Table not scanned", f"Run a Data Quality Scan on {selected_table} first.", "Go to Data Quality", "Data Quality")
         return
 
-    res = st.session_state.table_results[selected_table]
-    df = res.get("repaired_df") if res.get("repaired_df") is not None else res.get("df")
+    res = scan_results[selected_table]
+
+    # Load DataFrame on demand if not present in memory
+    if res.get("repaired_df") is not None:
+        df = res["repaired_df"]
+    elif res.get("df") is not None:
+        df = res["df"]
+    else:
+        df, _ = ws.load_table(selected_table)
 
     tab_auto, tab_impute, tab_drop = st.tabs(["Auto Repairs", "Impute Nulls", "Drop Column"])
 
@@ -453,7 +705,7 @@ def render_cleaning(ws: ProjectWorkspace):
                             p.approval_state = ApprovalState.APPROVED
                             instructions.append(p.to_repair_instruction())
                     with st.spinner("Applying repairs..."):
-                        repaired_df, repair_res = re.apply(res["df"], instructions)
+                        repaired_df, repair_res = re.apply(df, instructions)
                         res["repaired_df"] = repaired_df
                         res["repair_results"] = repair_res
                         dvm = DatasetVersioningManager(ws.project_root)
@@ -623,12 +875,22 @@ def render_validation(ws: ProjectWorkspace):
 
     selected_table = st.selectbox("Select Table", list(ws.registry.keys()), key="val_table_select")
 
-    if "table_results" not in st.session_state or selected_table not in st.session_state.table_results:
+    scan_results = get_project_scan_results(ws)
+    if selected_table not in scan_results or scan_results[selected_table].get("scan_status") != "COMPLETED":
         empty_state("Table not scanned", f"Run a Data Quality Scan on {selected_table} first.", "Go to Data Quality", "Data Quality")
         return
 
-    res = st.session_state.table_results[selected_table]
-    df = res.get("repaired_df") if res.get("repaired_df") is not None else res.get("df")
+    res = scan_results[selected_table]
+    if res.get("repaired_df") is not None:
+        df = res["repaired_df"]
+    elif res.get("df") is not None:
+        df = res["df"]
+    else:
+        try:
+            df, _ = ws.load_table(selected_table)
+        except Exception as e:
+            st.error(f"Could not load data for table '{selected_table}': {e}")
+            return
 
     tab_snapshot, tab_pattern = st.tabs(["Validation Snapshot", "Custom Pattern Validation"])
 
@@ -646,6 +908,10 @@ def render_validation(ws: ProjectWorkspace):
             st.info("No validation snapshot found.")
 
     with tab_pattern:
+        if df is None or not hasattr(df, "columns"):
+            st.warning("No tabular data available for pattern validation.")
+            return
+
         col = st.selectbox("Select Column for Pattern Validation", df.columns.tolist(), key="pat_col")
         pattern = st.text_input("Regex Pattern", key="pat_regex")
 

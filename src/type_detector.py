@@ -60,6 +60,36 @@ def is_boolean_semantic(series: pd.Series) -> bool:
     return any(unique_vals.issubset(bs) for bs in boolean_sets)
 
 
+DEFAULT_SEMANTIC_SAMPLE_SIZE = 2000
+
+def _get_semantic_inference_sample(series: pd.Series, max_samples: int = DEFAULT_SEMANTIC_SAMPLE_SIZE) -> pd.Series:
+    """
+    Deterministically samples up to max_samples rows for schema inference across
+    the start, middle, and end of non-null values.
+
+    Sampling Strategy:
+    - If non-null count <= max_samples: all non-null values are evaluated (100% population).
+    - If non-null count > max_samples: an equidistant stratified sample is taken using
+      np.linspace(0, n - 1, max_samples, dtype=int), capturing rows at the very start (index 0),
+      the very end (index n - 1), and regularly spaced throughout the dataset.
+
+    Trade-off:
+    - Performance: Prevents slow row-by-row dateutil fallbacks on hundreds of thousands or
+      millions of non-date string values (e.g. city names, IDs), enabling sub-second schema
+      detection.
+    - Confidence: A bounded sample infers column semantic classification with high statistical
+      confidence, but does NOT assert that all rows are clean. Crucially, full data quality scanning
+      (Phase 4 Quality Engine) continues to validate 100% of all rows across the full dataset
+      without truncation.
+    """
+    non_null = series.dropna()
+    n = len(non_null)
+    if n <= max_samples:
+        return non_null
+    indices = np.linspace(0, n - 1, max_samples, dtype=int)
+    return non_null.iloc[indices]
+
+
 def is_date_semantic(series: pd.Series) -> bool:
     """Check if series represents dates (no time component)."""
     non_null = series.dropna()
@@ -67,9 +97,10 @@ def is_date_semantic(series: pd.Series) -> bool:
         return False
     if pd.api.types.is_numeric_dtype(non_null):
         return False
-    parsed = pd.to_datetime(non_null, errors='coerce')
+    sample = _get_semantic_inference_sample(non_null)
+    parsed = pd.to_datetime(sample, errors='coerce')
     valid = parsed.dropna()
-    if len(valid) / len(non_null) < 0.5:
+    if len(valid) / len(sample) < 0.5:
         return False
     return bool((valid.dt.time == pd.Timestamp('00:00:00').time()).mean() >= 0.8)
 
@@ -81,9 +112,10 @@ def is_datetime_semantic(series: pd.Series) -> bool:
         return False
     if pd.api.types.is_numeric_dtype(non_null):
         return False
-    parsed = pd.to_datetime(non_null, errors='coerce')
+    sample = _get_semantic_inference_sample(non_null)
+    parsed = pd.to_datetime(sample, errors='coerce')
     valid = parsed.dropna()
-    if len(valid) / len(non_null) < 0.5:
+    if len(valid) / len(sample) < 0.5:
         return False
     return bool(not (valid.dt.time == pd.Timestamp('00:00:00').time()).all())
 
@@ -94,7 +126,8 @@ def is_email_semantic(series: pd.Series) -> bool:
     non_null = series.dropna().astype(str)
     if non_null.empty:
         return False
-    matches = non_null.apply(lambda x: bool(email_pattern.match(x.strip())))
+    sample = _get_semantic_inference_sample(non_null)
+    matches = sample.apply(lambda x: bool(email_pattern.match(x.strip())))
     # At least 80% match rate for emails
     return bool(matches.mean() >= 0.8)
 
@@ -106,7 +139,8 @@ def is_phone_semantic(series: pd.Series) -> bool:
     non_null = series.dropna().astype(str)
     if non_null.empty:
         return False
-    matches = non_null.apply(lambda x: bool(phone_pattern.match(x.strip())))
+    sample = _get_semantic_inference_sample(non_null)
+    matches = sample.apply(lambda x: bool(phone_pattern.match(x.strip())))
     return bool(matches.mean() >= 0.7)
 
 
@@ -116,7 +150,8 @@ def is_url_semantic(series: pd.Series) -> bool:
     non_null = series.dropna().astype(str)
     if non_null.empty:
         return False
-    matches = non_null.apply(lambda x: bool(url_pattern.match(x.strip())))
+    sample = _get_semantic_inference_sample(non_null)
+    matches = sample.apply(lambda x: bool(url_pattern.match(x.strip())))
     return bool(matches.mean() >= 0.8)
 
 

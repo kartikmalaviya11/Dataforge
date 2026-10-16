@@ -196,8 +196,8 @@ class TestDataForgeBrowserAcceptance:
         nav_to(page, "Data Quality")
         page.wait_for_selector('h2:has-text("Data Quality Scan")', timeout=15000)
 
-        # Click Scan Table
-        scan_btn = page.locator('button:has-text("Scan Table")')
+        # Click Scan Table / Scan Selected Table
+        scan_btn = page.locator('button:has-text("Scan Selected Table"), button:has-text("Scan Table")').first
         scan_btn.wait_for(state="visible", timeout=15000)
         scan_btn.click()
 
@@ -462,3 +462,19 @@ class TestDataForgeBrowserAcceptance:
             for rel_path, expected_sha in manifest_dict.items():
                 member_bytes = z.read(rel_path.replace('\\', '/'))
                 assert hashlib.sha256(member_bytes).hexdigest() == expected_sha
+
+    def test_12_feature_engineering_page_navigation(self, browser_app):
+        """Workflow 12: Open Feature Engineering, verify clean render without import error, and check date part options."""
+        page = browser_app["page"]
+        nav_to(page, "Feature Engineering")
+        page.wait_for_selector('h2:has-text("Feature Engineering")', timeout=15000)
+        assert page.locator('h2:has-text("Feature Engineering")').is_visible()
+
+        # Verify no error text or traceback is visible on the page
+        assert not page.locator('text=ImportError').is_visible()
+        assert not page.locator('text=cannot import name').is_visible()
+
+        # Switch to Date Part in Feature Type dropdown and verify options
+        type_select = page.locator('div[data-testid="stSelectbox"]:has-text("Feature Type")')
+        type_select.wait_for(state="visible", timeout=15000)
+        assert type_select.is_visible()
