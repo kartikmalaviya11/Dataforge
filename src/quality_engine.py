@@ -55,7 +55,7 @@ _CONSISTENCY_OPERATORS = {
 
 # ─── Result Dataclass ───────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class QualityIssue:
     row_index: Optional[Any]        # pandas index label of the affected row
     column: Optional[str]           # affected column (None for whole-row issues)
@@ -186,31 +186,36 @@ def check_case_inconsistencies(df: pd.DataFrame, column_profiles: list, custom_m
         # Conceptually trim first, then normalize
         stripped = valid_series.str.strip()
         normalized = stripped.str.lower()
-        
-        # Group the STRIPPED values by the NORMALIZED values
-        grouped = stripped.groupby(normalized)
-        
+
+        # Fast vectorized pre-filter: identify normalized values having >1 distinct stripped variant
+        pair_df = pd.DataFrame({"norm": normalized, "stripped": stripped}).drop_duplicates()
+        conflicting_norms = pair_df.loc[pair_df["norm"].duplicated(keep=False), "norm"].unique()
+        if len(conflicting_norms) == 0:
+            continue
+
+        # Only group the conflicting subset
+        conflict_mask = normalized.isin(set(conflicting_norms))
+        conflicting_stripped = stripped[conflict_mask]
+        conflicting_norm = normalized[conflict_mask]
+        grouped = conflicting_stripped.groupby(conflicting_norm)
+
         for norm_val, group in grouped:
-            unique_casing_variants = group.unique()
-            if len(unique_casing_variants) > 1:
-                val_counts = group.value_counts()
-                canonical = val_counts.idxmax()
-                
-                # Only flag if there are multiple DIFFERENT casings for the same letters
-                for idx in group.index:
+            val_counts = group.value_counts()
+            canonical = val_counts.idxmax()
+
+            for idx in group.index:
+                stripped_val_str = str(group.loc[idx])
+                if stripped_val_str != canonical:
                     original_val_str = str(series.loc[idx])
-                    stripped_val_str = str(group.loc[idx])
-                    
-                    if stripped_val_str != canonical:
-                        issues.append(QualityIssue(
-                            row_index=_to_native(idx),
-                            column=col,
-                            issue_type=ISSUE_INCONSISTENT_CASE,
-                            check_name="case_inconsistency_check",
-                            actual_value=_to_native(original_val_str),
-                            expected_condition="Consistent casing across dataset",
-                            description=f"Value '{stripped_val_str}' has inconsistent casing variations in the dataset (canonical is '{canonical}').",
-                        ))
+                    issues.append(QualityIssue(
+                        row_index=_to_native(idx),
+                        column=col,
+                        issue_type=ISSUE_INCONSISTENT_CASE,
+                        check_name="case_inconsistency_check",
+                        actual_value=_to_native(original_val_str),
+                        expected_condition="Consistent casing across dataset",
+                        description=f"Value '{stripped_val_str}' has inconsistent casing variations in the dataset (canonical is '{canonical}').",
+                    ))
 
     return issues
 
@@ -590,23 +595,34 @@ def run_quality_checks(
     allowed_categories: Optional[dict[str, set]] = None,
     column_ranges: Optional[dict[str, tuple[Optional[float], Optional[float]]]] = None,
     consistency_rules: Optional[list[dict]] = None,
-    custom_missing_markers: Optional[set[str]] = None
+    custom_missing_markers: Optional[set[str]] = None,
+    progress_callback: Optional[Any] = None
 ) -> list[QualityIssue]:
     logger.info("Running Phase 4 data quality checks...")
     issues: list[QualityIssue] = []
 
-    issues += check_missing_values(df, column_profiles, custom_missing_markers=custom_missing_markers)
-    issues += check_whitespace_issues(df, column_profiles, custom_missing_markers=custom_missing_markers)
-    issues += check_case_inconsistencies(df, column_profiles, custom_missing_markers=custom_missing_markers)
-    issues += check_duplicate_rows(df)
-    issues += check_potential_duplicates(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)
-    issues += check_duplicate_ids(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)
-    issues += check_invalid_emails(df, type_results, custom_missing_markers=custom_missing_markers)
-    issues += check_invalid_dates(df, type_results, custom_missing_markers=custom_missing_markers)
-    issues += check_invalid_numeric(df, type_results, custom_missing_markers=custom_missing_markers)
-    issues += check_invalid_categories(df, allowed_categories=allowed_categories, custom_missing_markers=custom_missing_markers)
-    issues += check_range_violations(df, column_ranges=column_ranges, custom_missing_markers=custom_missing_markers)
-    issues += check_consistency(df, type_results, consistency_rules=consistency_rules, custom_missing_markers=custom_missing_markers)
+    check_steps = [
+        ("Missing values (1/12)", lambda: check_missing_values(df, column_profiles, custom_missing_markers=custom_missing_markers)),
+        ("Whitespace issues (2/12)", lambda: check_whitespace_issues(df, column_profiles, custom_missing_markers=custom_missing_markers)),
+        ("Case inconsistencies (3/12)", lambda: check_case_inconsistencies(df, column_profiles, custom_missing_markers=custom_missing_markers)),
+        ("Duplicate rows (4/12)", lambda: check_duplicate_rows(df)),
+        ("Potential duplicates (5/12)", lambda: check_potential_duplicates(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)),
+        ("Duplicate IDs (6/12)", lambda: check_duplicate_ids(df, type_results, id_columns=id_columns, custom_missing_markers=custom_missing_markers)),
+        ("Invalid emails (7/12)", lambda: check_invalid_emails(df, type_results, custom_missing_markers=custom_missing_markers)),
+        ("Invalid dates (8/12)", lambda: check_invalid_dates(df, type_results, custom_missing_markers=custom_missing_markers)),
+        ("Invalid numeric (9/12)", lambda: check_invalid_numeric(df, type_results, custom_missing_markers=custom_missing_markers)),
+        ("Invalid categories (10/12)", lambda: check_invalid_categories(df, allowed_categories=allowed_categories, custom_missing_markers=custom_missing_markers)),
+        ("Range violations (11/12)", lambda: check_range_violations(df, column_ranges=column_ranges, custom_missing_markers=custom_missing_markers)),
+        ("Consistency rules (12/12)", lambda: check_consistency(df, type_results, consistency_rules=consistency_rules, custom_missing_markers=custom_missing_markers)),
+    ]
+
+    for label, fn in check_steps:
+        if progress_callback:
+            try:
+                progress_callback(label)
+            except Exception:
+                pass
+        issues += fn()
 
     logger.info(f"Data quality checks complete: {len(issues)} issue(s) found")
     return issues

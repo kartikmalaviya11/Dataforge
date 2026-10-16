@@ -27,13 +27,11 @@ class SQLAnalysisResult:
 def _compare_values(python_val: Any, sql_val: Any, tolerance: float = 1e-5) -> tuple[bool, Any]:
     """
     Centralized comparison logic.
-    - If None, both must be None.
+    - If either value is None or NaN, it is NOT a successful validation.
     - If Numeric, match using math.isclose for floating points.
     - If String/Bool, exact match.
     Returns: (is_match, difference)
     """
-    if python_val is None and sql_val is None:
-        return True, 0
     if python_val is None or sql_val is None:
         return False, None
         
@@ -47,11 +45,11 @@ def _compare_values(python_val: Any, sql_val: Any, tolerance: float = 1e-5) -> t
             is_numeric = False
             
         if is_numeric:
+            # Handle NaNs safely: if either value is NaN, it is not a valid match
+            if math.isnan(py_f) or math.isnan(sql_f):
+                return False, None
+
             diff = abs(py_f - sql_f)
-            
-            # Handle NaNs safely
-            if math.isnan(py_f) and math.isnan(sql_f):
-                return True, 0.0
                 
             # Exact match (for ints or exact floats)
             if py_f == sql_f:
@@ -192,13 +190,14 @@ class SQLAnalyzer:
                     col = col_raw
                 if col not in self.df.columns:
                     return None
-                series = pd.to_numeric(self.df[col], errors='coerce') if func in ('SUM', 'AVERAGE') else self.df[col]
-                if func == 'SUM':
-                    return float(series.sum())
-                elif func == 'AVERAGE':
-                    return float(series.mean())
+                if func in ('SUM', 'AVERAGE'):
+                    series = pd.to_numeric(self.df[col], errors='coerce')
+                    valid_numeric = series.dropna()
+                    if valid_numeric.empty:
+                        return None
+                    return float(valid_numeric.sum()) if func == 'SUM' else float(valid_numeric.mean())
                 elif func == 'DISTINCTCOUNT':
-                    return int(series.nunique())
+                    return int(self.df[col].nunique())
                 return None
 
             logic_eval = kpi.calculation_logic.split(" grouped by ")[0].strip()
@@ -211,7 +210,7 @@ class SQLAnalyzer:
             else:
                 python_result = _eval_agg(logic_eval)
             
-            if python_result is None:
+            if python_result is None or (isinstance(python_result, float) and math.isnan(python_result)):
                 python_result = "NOT_AVAILABLE"
 
         # Parse calculation logic into SQL safely
@@ -248,12 +247,15 @@ class SQLAnalyzer:
             func = match.group(1)
             col_raw = match.group(2).strip()
             
+            quoted_col = _safe_quote(col_raw)
             if func == "DISTINCTCOUNT":
-                return f"COUNT(DISTINCT {_safe_quote(col_raw)})"
+                return f"COUNT(DISTINCT {quoted_col})"
             if func == "AVERAGE":
-                return f"AVG({_safe_quote(col_raw)})"
+                return f"AVG(TRY_CAST({quoted_col} AS DOUBLE))"
+            if func == "SUM":
+                return f"SUM(TRY_CAST({quoted_col} AS DOUBLE))"
             
-            return f"{func}({_safe_quote(col_raw)})"
+            return f"{func}({quoted_col})"
         return expression
 
     def close(self):

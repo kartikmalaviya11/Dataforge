@@ -61,14 +61,44 @@ class DuckDBEngine:
                         needs_update = True
                 
                 if needs_update:
-                    # Read via pandas once
-                    df = pd.read_excel(file_path)
+                    # Read via pandas preserving raw cell values (e.g. leading zeros in text codes)
+                    df = pd.read_excel(file_path, dtype=object)
                     # Convert object columns preserving NULL/NA values (avoiding literal 'nan' or 'None')
                     for col in df.columns:
-                        if df[col].dtype == 'object':
-                            mask = df[col].notna()
+                        mask = df[col].notna()
+                        if not mask.any():
                             df[col] = df[col].where(mask, None)
-                            df.loc[mask, col] = df.loc[mask, col].astype(str)
+                            continue
+
+                        # 1. Preserve booleans
+                        if df.loc[mask, col].map(lambda x: isinstance(x, bool)).all():
+                            df[col] = df[col].astype('boolean')
+                            continue
+
+                        # 2. Preserve text identifiers and codes with leading zeros (e.g. '00123', '00045')
+                        has_leading_zero = False
+                        for val in df.loc[mask, col]:
+                            if isinstance(val, str) and re.match(r'^[+-]?0\d', val.strip()):
+                                has_leading_zero = True
+                                break
+
+                        if not has_leading_zero:
+                            num_converted = pd.to_numeric(df.loc[mask, col], errors='coerce')
+                            if num_converted.notna().all():
+                                df[col] = pd.to_numeric(df[col], errors='coerce')
+                                continue
+                            first_val = df.loc[mask, col].iloc[0]
+                            if hasattr(first_val, 'year') or ('-' in str(first_val) or '/' in str(first_val)):
+                                try:
+                                    dt_converted = pd.to_datetime(df.loc[mask, col], errors='coerce')
+                                    if dt_converted.notna().all():
+                                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                                        continue
+                                except Exception:
+                                    pass
+
+                        df[col] = df[col].where(mask, None)
+                        df.loc[mask, col] = df.loc[mask, col].astype(str)
                     
                     df.to_parquet(cache_path)
                     try:

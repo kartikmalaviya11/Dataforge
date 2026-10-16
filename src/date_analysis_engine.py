@@ -187,7 +187,7 @@ class DateAnalysisEngine:
         metric = self.metrics[metric_id]
         q_monthly = f"""
         WITH monthly AS (
-            SELECT strftime(TRY_CAST("{date_col}" AS DATE), '%Y-%m') AS YearMonth, SUM("{val_col}") AS sum_val
+            SELECT strftime(TRY_CAST("{date_col}" AS DATE), '%Y-%m') AS YearMonth, SUM(TRY_CAST("{val_col}" AS DOUBLE)) AS sum_val
             FROM "{table_name}" WHERE TRY_CAST("{date_col}" AS DATE) IS NOT NULL GROUP BY 1
         ),
         date_series AS (

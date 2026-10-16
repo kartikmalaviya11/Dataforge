@@ -68,7 +68,8 @@ def run_pipeline(uploaded_file, rules_yaml_path, progress_callback=None):
 
         if progress_callback:
             progress_callback("Running quality checks")
-        quality_issues = run_quality_checks(df, col_profiles, type_results)
+        qc_cb = (lambda desc: progress_callback(f"Quality: {desc}")) if progress_callback else None
+        quality_issues = run_quality_checks(df, col_profiles, type_results, progress_callback=qc_cb)
 
         rule_issues = []
         rules_configured = False
@@ -89,6 +90,8 @@ def run_pipeline(uploaded_file, rules_yaml_path, progress_callback=None):
             excel_eng = ExcelQualityEngine(raw_bytes)
             excel_issues = excel_eng.analyze(df)
 
+        if progress_callback:
+            progress_callback("Consolidating issues")
         im = IssueManager()
         all_issues = im.consolidate(quality_issues + rule_issues + excel_issues)
 

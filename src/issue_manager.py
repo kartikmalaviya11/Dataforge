@@ -19,7 +19,7 @@ class IssueClassification(Enum):
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
     UNSAFE_TO_FIX = "UNSAFE_TO_FIX"
 
-@dataclass
+@dataclass(slots=True)
 class StandardizedIssue:
     issue_id: str
     source: str
@@ -33,6 +33,7 @@ class StandardizedIssue:
     message: str
     recommendation: str
     classification: IssueClassification = IssueClassification.UNSAFE_TO_FIX
+    affected_count: Optional[int] = None
 
 def _classify_issue(source: str, issue_type: str, column: Optional[str] = None) -> IssueClassification:
     """
