@@ -275,3 +275,93 @@ def test_1m_row_large_validation(tmp_path):
         new_hash = hashlib.sha256(f.read()).hexdigest()
     
     assert orig_hash == new_hash
+
+def test_kpi_filter_single_quote_escaping(tmp_path):
+    # Test that filter values with single quotes (e.g. O'Connor) are properly escaped in SQL and handled in Pandas
+    df = pd.DataFrame({
+        "id": [1, 2, 3],
+        "customer": ["O'Connor", "Smith", "O'Reilly"],
+        "amount": [100.0, 200.0, 300.0]
+    })
+    csv_path = os.path.join(str(tmp_path), "quotes.csv")
+    df.to_csv(csv_path, index=False)
+
+    ws = ProjectWorkspace(str(tmp_path))
+    ws.discover_datasets()
+    eng = DuckDBEngine(ws)
+
+    metric = MetricDefinition(
+        metric_name="oconnor_sum",
+        operation="SUM",
+        source_table="quotes",
+        source_column="amount",
+        filters=[FilterDefinition(column="customer", operator="==", value="O'Connor")]
+    )
+
+    sql_val = SQLValidator(eng)
+    pd_val = PandasValidator(eng)
+    cross = CrossValidator(sql_val, pd_val)
+
+    res = cross.validate(metric)
+    assert res["status"] == "MATCH"
+    assert res["sql_result"] == 100.0
+    assert res["pandas_result"] == 100.0
+
+    checker = KPISemanticChecker()
+    check_res = checker.check_consistency(metric)
+    assert "''" in check_res["sql_representation"] or "O''Connor" in check_res["sql_representation"]
+    assert "O'Connor" in check_res["pandas_representation"]
+
+def test_defect_rate_calculation_distinct_affected_records():
+    from src.issue_manager import StandardizedIssue
+    from src.kpi_engine import KPIEngine
+    engine = KPIEngine()
+
+    # 3 total rows. Row 0 has 2 issues on 'price', Row 1 has 1 issue on 'price'.
+    # Total distinct affected rows for 'price' = 2 -> defect rate should be 2/3 = 0.6667, NOT 3/3 or > 1.0
+    issues = [
+        StandardizedIssue(
+            issue_id="ISSUE-1", source="rules", issue_type="NEGATIVE_VALUE",
+            rule_or_check_name="check_positive", row_index=0, column="price",
+            actual_value=-5, expected_condition="> 0", severity="HIGH",
+            message="negative", recommendation="fix"
+        ),
+        StandardizedIssue(
+            issue_id="ISSUE-2", source="quality", issue_type="OUTLIER",
+            rule_or_check_name="zscore", row_index=0, column="price",
+            actual_value=-5, expected_condition="normal", severity="MEDIUM",
+            message="outlier", recommendation="review"
+        ),
+        StandardizedIssue(
+            issue_id="ISSUE-3", source="rules", issue_type="INVALID_TYPE",
+            rule_or_check_name="check_num", row_index=1, column="price",
+            actual_value="abc", expected_condition="numeric", severity="HIGH",
+            message="invalid", recommendation="fix"
+        ),
+    ]
+
+    # 3 total rows, 2 unique affected rows on 'price' (Row 0 has 2 issues, Row 1 has 1 issue)
+    # -> defect rate is 2 / 3 = 0.6667, NOT 3/3 (100%) or > 1.0
+    rates = engine._calculate_defect_rates(issues, total_rows=3)
+    assert "price" in rates
+    assert rates["price"] <= 1.0
+    assert round(rates["price"], 4) == round(2 / 3, 4)
+
+    # 5 issues on 3 rows -> rate is strictly capped at 1.0 (100%), not 166.7%
+    more_issues = issues + [
+        StandardizedIssue(
+            issue_id="ISSUE-4", source="rules", issue_type="FORMAT_ERROR",
+            rule_or_check_name="format", row_index=2, column="price",
+            actual_value="xyz", expected_condition="valid", severity="LOW",
+            message="format", recommendation="fix"
+        ),
+        StandardizedIssue(
+            issue_id="ISSUE-5", source="quality", issue_type="OUTLIER",
+            rule_or_check_name="zscore", row_index=2, column="price",
+            actual_value=9999, expected_condition="normal", severity="MEDIUM",
+            message="outlier", recommendation="review"
+        )
+    ]
+    rates_capped = engine._calculate_defect_rates(more_issues, total_rows=3)
+    assert rates_capped["price"] == 1.0
+    assert rates_capped["price"] <= 1.0

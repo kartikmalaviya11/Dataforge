@@ -134,3 +134,35 @@ def test_null_heavy_columns():
     detector = RelationshipDetector()
     candidates = detector.detect({"t1": df1, "t2": df2})
     assert len(candidates) == 1
+
+def test_relationship_persistence_and_acceptance(tmp_path):
+    c1 = RelationshipCandidate(
+        source_table="orders", source_column="customer_id",
+        target_table="customers", target_column="customer_id",
+        cardinality=Cardinality.MANY_TO_ONE.value,
+        source_unique=False, target_unique=True,
+        match_coverage=100.0, orphan_rate=0.0,
+        confidence=95.0, evidence=["Match coverage: 100.0%"],
+        status=RelationshipStatus.CANDIDATE.value
+    )
+    rel_file = tmp_path / "relationships.json"
+    RelationshipDetector.save_candidates([c1], rel_file)
+    assert rel_file.exists()
+
+    loaded = RelationshipDetector.load_candidates(rel_file)
+    assert len(loaded) == 1
+    assert loaded[0].source_table == "orders"
+    assert loaded[0].status == "CANDIDATE"
+
+    # Accept the candidate
+    loaded[0].status = "ACCEPTED"
+    RelationshipDetector.save_candidates(loaded, rel_file)
+
+    reloaded = RelationshipDetector.load_candidates(rel_file)
+    assert reloaded[0].status == "ACCEPTED"
+
+    # Verify ERGenerator renders accepted candidate
+    model = DataModel(tables={}, relationships=reloaded)
+    dot = ERGenerator().generate_dot(model)
+    assert "orders" in dot
+    assert "customers" in dot

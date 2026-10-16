@@ -1,6 +1,6 @@
 import openpyxl
 from collections import Counter
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
 import io
 
@@ -13,15 +13,28 @@ class ExcelQualityEngine:
     Generates StandardizedIssue objects that flow into the existing proposal architecture.
     """
     
-    def __init__(self, raw_bytes: bytes):
+    def __init__(self, raw_bytes: bytes, sheet_name: Optional[str] = None):
         self.raw_bytes = raw_bytes
+        self.sheet_name = sheet_name
         self.has_formulas_or_merges = False
         
     def analyze(self, df: pd.DataFrame) -> List[StandardizedIssue]:
         issues = []
+        if not self.raw_bytes:
+            return []
+
+        # Check if file is legacy binary Excel format (.xls - OLE2 compound document)
+        if self.raw_bytes.startswith(b'\xd0\xcf\x11\xe0'):
+            # Legacy .xls cannot be parsed by openpyxl; mark formulas/merges True conservatively to protect data
+            self.has_formulas_or_merges = True
+            return []
+
         try:
             wb = openpyxl.load_workbook(io.BytesIO(self.raw_bytes), data_only=False)
-            ws = wb.active
+            if self.sheet_name and self.sheet_name in wb.sheetnames:
+                ws = wb[self.sheet_name]
+            else:
+                ws = wb.active
             
             # Check for structural dependencies (formulas or merges)
             if ws.merged_cells.ranges:
@@ -35,7 +48,9 @@ class ExcelQualityEngine:
                     if self.has_formulas_or_merges:
                         break
         except Exception:
-            return [] # If it's not a valid Excel file or something fails, skip safely
+            # Conservative safeguard for corrupted or unreadable Excel workbooks
+            self.has_formulas_or_merges = True
+            return []
             
         # Helper to get cells in a column ignoring the header (row 1)
         # We assume pandas row_index (0-based) corresponds to Excel row (2-based)

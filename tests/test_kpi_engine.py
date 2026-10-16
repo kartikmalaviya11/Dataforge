@@ -18,13 +18,13 @@ def create_type_result(col, detected_type):
         recommended_action="None"
     )
 
-def create_issue(col):
+def create_issue(col, row_index=None):
     return StandardizedIssue(
         issue_id="test",
         source="quality",
         issue_type="MISSING_VALUE",
         rule_or_check_name="test",
-        row_index=1,
+        row_index=row_index,
         column=col,
         actual_value=None,
         expected_condition="not null",
@@ -66,13 +66,37 @@ def test_sales_and_profit_ratio(engine):
     
 def test_requires_review_due_to_defects(engine):
     types = [create_type_result("Sales", "Currency")]
-    issues = [create_issue("Sales") for _ in range(15)]
+    issues = [create_issue("Sales", row_index=i) for i in range(15)]
     
     recs = engine.recommend_kpis(100, types, issues)
     total_sales = next(r for r in recs if r.kpi_name == "Total Sales")
     
     assert total_sales.status == "REQUIRES_REVIEW"
     assert "defect rate of 15.0%" in total_sales.explanation
+
+def test_defect_rate_multiple_issues_same_row(engine):
+    types = [create_type_result("Sales", "Currency")]
+    # 5 issues all on the same row (row_index=1), 1 on row_index=2
+    # Only 2 unique rows are affected out of 100 rows -> defect rate is 2.0% (NOT 6.0%)
+    issues = [
+        StandardizedIssue("i1", "quality", "MISSING_VALUE", "chk", row_index=1, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+        StandardizedIssue("i2", "quality", "OUTLIER", "chk", row_index=1, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+        StandardizedIssue("i3", "rules", "RANGE", "chk", row_index=1, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+        StandardizedIssue("i4", "rules", "FORMAT", "chk", row_index=1, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+        StandardizedIssue("i5", "rules", "CUSTOM", "chk", row_index=1, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+        StandardizedIssue("i6", "quality", "MISSING_VALUE", "chk", row_index=2, column="Sales",
+                          actual_value=None, expected_condition="not null", severity="MEDIUM", message="m", recommendation="r"),
+    ]
+    rates = engine._calculate_defect_rates(issues, 100)
+    assert rates["Sales"] == 0.02
+    recs = engine.recommend_kpis(100, types, issues)
+    total_sales = next(r for r in recs if r.kpi_name == "Total Sales")
+    assert total_sales.status == "AVAILABLE"
     
 def test_not_a_measure_heuristics(engine):
     types = [

@@ -29,7 +29,8 @@ class ExportService:
                      comparison_result: ComparisonResult,
                      after_issues: List[StandardizedIssue],
                      raw_bytes: Optional[bytes] = None,
-                     filename: Optional[str] = None) -> bytes:
+                     filename: Optional[str] = None,
+                     sheet_name: Optional[str] = None) -> bytes:
         """
         Exports the cleaned DataFrame and audit sheets to an Excel workbook.
         If original workbook bytes are provided (Phase 6), it preserves the workbook structure.
@@ -106,16 +107,27 @@ class ExportService:
             }
             summary_df = pd.DataFrame(summary_data)
             
-        is_excel_native = raw_bytes and filename and filename.lower().endswith(('.xlsx', '.xls'))
-        
+        is_excel_native = bool(raw_bytes and ((filename and filename.lower().endswith(('.xlsx', '.xls'))) or raw_bytes.startswith(b'PK\x03\x04') or not filename))
+        loaded_wb = False
+        wb = None
         if is_excel_native:
             import openpyxl
             from openpyxl.utils.dataframe import dataframe_to_rows
             from openpyxl.styles import PatternFill, Font, Alignment
             
-            # Phase 6: Load original workbook to preserve formulas, formatting, sheets, merged cells
-            wb = openpyxl.load_workbook(io.BytesIO(raw_bytes))
-            ws = wb.active # The data sheet
+            try:
+                # Phase 6: Load original workbook to preserve formulas, formatting, sheets, merged cells
+                wb = openpyxl.load_workbook(io.BytesIO(raw_bytes))
+                loaded_wb = True
+            except Exception:
+                # If loading fails (e.g. legacy .xls format or corrupt stream), fall back to pandas ExcelWriter
+                loaded_wb = False
+
+        if loaded_wb and wb is not None:
+            if sheet_name and sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+            else:
+                ws = wb.active # The data sheet
             
             # Build column index mapping
             header_row = [cell.value for cell in ws[1]]

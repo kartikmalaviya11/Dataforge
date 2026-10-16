@@ -21,6 +21,13 @@ def render_relationships(ws: ProjectWorkspace):
         )
         return
 
+    from src.relationship_engine import RelationshipDetector
+    rel_path = ws.project_root / ".dataforge" / "relationships.json"
+
+    if "relationship_candidates" not in st.session_state:
+        if rel_path.exists():
+            st.session_state.relationship_candidates = RelationshipDetector.load_candidates(rel_path)
+
     if dataforge_button("Detect Relationships", type="primary"):
         tables_cache = {}
         def _load_tables():
@@ -29,9 +36,19 @@ def render_relationships(ws: ProjectWorkspace):
                 tables_cache[tname] = df
 
         def _detect():
-            from src.relationship_engine import RelationshipDetector
             detector = RelationshipDetector()
-            st.session_state.relationship_candidates = detector.detect(tables_cache)
+            new_candidates = detector.detect(tables_cache)
+            if rel_path.exists():
+                existing = {
+                    (c.source_table, c.source_column, c.target_table, c.target_column): c.status
+                    for c in RelationshipDetector.load_candidates(rel_path)
+                }
+                for nc in new_candidates:
+                    key = (nc.source_table, nc.source_column, nc.target_table, nc.target_column)
+                    if key in existing:
+                        nc.status = existing[key]
+            st.session_state.relationship_candidates = new_candidates
+            RelationshipDetector.save_candidates(new_candidates, rel_path)
 
         from ui.components import run_action
         run_action("Detect Relationships", [
@@ -46,14 +63,35 @@ def render_relationships(ws: ProjectWorkspace):
         else:
             rel_data = []
             for r in candidates:
+                stat = r.status.value if hasattr(r.status, "value") else str(r.status)
+                card = r.cardinality.value if hasattr(r.cardinality, "value") else str(r.cardinality)
                 rel_data.append({
-                    "Accept": r.status == "ACCEPTED",
+                    "Accept": stat == "ACCEPTED",
                     "Source": f"{r.source_table}.{r.source_column}",
                     "Target": f"{r.target_table}.{r.target_column}",
-                    "Cardinality": r.cardinality,
+                    "Cardinality": card,
                     "Confidence": f"{r.confidence:.1f}%",
                 })
-            st.data_editor(pd.DataFrame(rel_data))
+
+            edited_df = st.data_editor(
+                pd.DataFrame(rel_data),
+                key="relationship_editor",
+                disabled=["Source", "Target", "Cardinality", "Confidence"],
+                use_container_width=True
+            )
+
+            # Apply user accept/reject decisions to the actual relationship objects
+            if edited_df is not None and not edited_df.empty:
+                changed = False
+                for idx, row in edited_df.iterrows():
+                    if idx < len(candidates):
+                        new_status = "ACCEPTED" if row.get("Accept") else "REJECTED"
+                        curr_status = candidates[idx].status.value if hasattr(candidates[idx].status, "value") else str(candidates[idx].status)
+                        if curr_status != new_status:
+                            candidates[idx].status = new_status
+                            changed = True
+                if changed:
+                    RelationshipDetector.save_candidates(candidates, rel_path)
 
             # Build DataModel to generate ERD
             from src.data_model import DataModel, TableSchema, ColumnSchema
@@ -64,10 +102,14 @@ def render_relationships(ws: ProjectWorkspace):
                 df, _ = ws.load_table(tname)
                 cols = {}
                 for c in df.columns:
-                    cols[c] = ColumnSchema(name=c, type=str(df[c].dtype))
+                    is_uniq = bool(len(df) > 0 and df[c].nunique(dropna=False) == len(df))
+                    cols[c] = ColumnSchema(name=c, type=str(df[c].dtype), is_unique=is_uniq)
                 tables[tname] = TableSchema(name=tname, row_count=len(df), columns=cols)
 
-            accepted_rels = [r for r in candidates if r.status == "ACCEPTED"]
+            accepted_rels = [
+                r for r in candidates
+                if (r.status == "ACCEPTED" or (hasattr(r.status, "value") and r.status.value == "ACCEPTED"))
+            ]
             dm = DataModel(tables=tables, relationships=accepted_rels)
             er_gen = ERGenerator()
             dot_str = er_gen.generate_dot(dm)
@@ -157,7 +199,7 @@ def render_sql_workspace(ws: ProjectWorkspace):
     ''', unsafe_allow_html=True)
     from src.sql_engine import DuckDBEngine
     first_tbl = list(ws.registry.keys())[0] if ws.registry else "dataset"
-    default_q = f"SELECT * FROM '{first_tbl}' LIMIT 5"
+    default_q = f'SELECT * FROM "{first_tbl}" LIMIT 5'
     query = st.text_area("SQL Query", default_q)
     if dataforge_button("Run Query", type="primary", key="btn_run_sql_query"):
         def _do_action():
@@ -240,42 +282,19 @@ def render_kpi_center(ws: ProjectWorkspace):
                         slug = "".join([c if c.isalnum() else "_" for c in k_name.lower()])
                         k_id = getattr(k, "kpi_id", f"kpi_{slug}")
 
-                        req_cols = getattr(k, "required_columns", [])
-                        col = req_cols[0] if req_cols else None
-                        src_tbl = getattr(k, "source_table", None)
-                        if not src_tbl and col:
-                            for tname in ws.registry.keys():
-                                df_t, _ = ws.load_table(tname)
-                                if col in df_t.columns:
-                                    src_tbl = tname
-                                    break
-                        if not src_tbl:
-                            src_tbl = list(ws.registry.keys())[0] if ws.registry else None
-
-                        df, _ = ws.load_table(src_tbl) if src_tbl else (None, None)
-                        val = 0.0
-                        if df is not None:
-                            calc = getattr(k, "calculation_logic", "").upper()
-                            if col and col in df.columns:
-                                s = pd.to_numeric(df[col], errors='coerce').dropna()
-                                if not s.empty:
-                                    if "AVG" in calc or "AVERAGE" in calc:
-                                        val = round(float(s.mean()), 2)
-                                    elif "COUNT" in calc:
-                                        val = round(float(len(s)), 2)
-                                    else:
-                                        val = round(float(s.sum()), 2)
-                                else:
-                                    val = round(float(len(df)), 2)
-                            else:
-                                val = round(float(len(df)), 2)
+                        val, status_msg = km.calculate_kpi_value(k, ws)
+                        if val is None:
+                            st.warning(f"Could not calculate snapshot for '{k_name}': {status_msg}")
+                            record_val = f"ERROR: {status_msg}"
+                        else:
+                            record_val = val
 
                         snap = KPISnapshot(
                             snapshot_id=str(uuid.uuid4()),
                             kpi_id=k_id,
                             kpi_name=k_name,
                             dataset_version_id=latest_v_id,
-                            value=val,
+                            value=record_val,
                             recorded_at=datetime.datetime.now(datetime.UTC).isoformat()
                         )
                         km.save_snapshot(snap)
@@ -512,6 +531,7 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
     import streamlit as st
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
+    from src.date_analysis_engine import SUPPORTED_MISSING_DATE_BEHAVIORS
 
     st.markdown('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
@@ -531,7 +551,14 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
     date_cols = list(df.columns)
     target_col = st.selectbox("Date Column", date_cols, key="date_col")
 
-    missing_behavior = st.selectbox("Missing Date Behavior", ["pad", "drop", "keep"], key="date_missing")
+    missing_behavior = st.selectbox(
+        "Missing Date Behavior",
+        options=list(SUPPORTED_MISSING_DATE_BEHAVIORS),
+        index=0,
+        format_func=lambda x: "Drop missing / invalid dates (Default)" if x == "drop" else "Error on missing / invalid dates",
+        key="date_missing",
+        help="Choose 'drop' to exclude missing or invalid dates when generating the date dimension, or 'error' to halt and raise an error if any missing or invalid date values are encountered."
+    )
 
     if dataforge_button("Generate Date Table", type="primary"):
         def _do_action():
@@ -551,11 +578,6 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
                 missing_date_behavior=missing_behavior
             )
             try:
-                # Need to convert to datetime first to avoid errors
-                df, _ = ws.load_table(target_table)
-                df[target_col] = pd.to_datetime(df[target_col])
-                ws.save_table(target_table, df)
-
                 de.register_config(cfg)
                 res_df = de.generate_date_table_pandas(cfg_id)
                 st.success("Date table generated successfully.")
@@ -700,7 +722,8 @@ def render_rca(ws: 'ProjectWorkspace'):
         df_t, _ = ws.load_table(tname)
         cols = {}
         for c in df_t.columns:
-            cols[c] = ColumnSchema(name=c, type=str(df_t[c].dtype))
+            is_uniq = bool(len(df_t) > 0 and df_t[c].nunique(dropna=False) == len(df_t))
+            cols[c] = ColumnSchema(name=c, type=str(df_t[c].dtype), is_unique=is_uniq)
         tables[tname] = TableSchema(name=tname, row_count=len(df_t), columns=cols)
 
     candidates = st.session_state.get("relationship_candidates", [])

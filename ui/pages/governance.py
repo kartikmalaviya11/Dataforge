@@ -159,6 +159,11 @@ def render_business_impact(ws: 'ProjectWorkspace'):
 
     kpis = st.session_state.get('kpis', [])
     if not kpis:
+        from src.kpi_manager import KPIManager
+        km = KPIManager(ws)
+        kpis = km.load_kpis()
+
+    if not kpis:
         empty_state("No KPIs available", "Generate KPIs first.", "Go to KPI Center", "KPI Center")
         return
 
@@ -173,7 +178,7 @@ def render_business_impact(ws: 'ProjectWorkspace'):
     from src.business_impact import BusinessImpactManager, BusinessImpact
     import datetime
 
-    bim = BusinessImpactManager(ws.project_root)
+    bim = BusinessImpactManager(ws)
     impacts = bim.get_all()
     if not impacts:
         st.info("No business impacts registered.")
@@ -181,10 +186,22 @@ def render_business_impact(ws: 'ProjectWorkspace'):
         st.dataframe(pd.DataFrame([i.__dict__ for i in impacts]))
 
     st.markdown("### Map Issue to KPI")
-    issue_options = {i.issue_id: f"{i.table_name}.{i.column_name}: {i.issue_type}" for i in all_issues}
+    def _format_issue(issue):
+        src = getattr(issue, "source", "table")
+        col = getattr(issue, "column", None)
+        itype = getattr(issue, "issue_type", "issue")
+        return f"{src}.{col if col else 'all'}: {itype}"
+
+    issue_options = {i.issue_id: _format_issue(i) for i in all_issues}
     issue_id = st.selectbox("Select Quality Issue", list(issue_options.keys()), format_func=lambda x: issue_options[x], key="bi_issue")
 
-    kpi_options = {k.kpi_id: k.name for k in kpis}
+    def _get_kpi_id(k):
+        return getattr(k, "kpi_id", getattr(k, "kpi_name", str(k)))
+
+    def _get_kpi_name(k):
+        return getattr(k, "kpi_name", getattr(k, "name", str(k)))
+
+    kpi_options = {_get_kpi_id(k): _get_kpi_name(k) for k in kpis}
     kpi_id = st.selectbox("Select Affected KPI", list(kpi_options.keys()), format_func=lambda x: kpi_options[x], key="bi_kpi")
 
     desc = st.text_area("Impact Description", key="bi_desc")
@@ -196,12 +213,14 @@ def render_business_impact(ws: 'ProjectWorkspace'):
                 return
 
             selected_issue = next(i for i in all_issues if i.issue_id == issue_id)
+            affected_count = getattr(selected_issue, "affected_count", 1)
+            issue_type = getattr(selected_issue, "issue_type", "Quality Issue")
             bi = BusinessImpact(
                 issue_id=issue_id,
-                affected_records=selected_issue.affected_count,
+                affected_records=affected_count,
                 affected_kpi=kpi_options[kpi_id],
                 business_impact_description=desc,
-                evidence=f"Detected {selected_issue.affected_count} records with {selected_issue.issue_type}",
+                evidence=f"Detected {affected_count} records with {issue_type}",
                 status="POTENTIAL_IMPACT",
                 created_at=datetime.datetime.now(datetime.UTC).isoformat()
             )
@@ -248,10 +267,25 @@ def render_export_package(ws: ProjectWorkspace):
         def _do_action():
             from src.project_export import ProjectExportManager
             em = ProjectExportManager(__import__("os").path.join(ws.project_root, ".dataforge", "export"))
-            out = em.generate_package(workspace=ws)
+            cleaned_tables = {}
+            for tname, tres in st.session_state.get("table_results", {}).items():
+                if isinstance(tres, dict) and tres.get("repaired_df") is not None:
+                    cleaned_tables[tname] = tres["repaired_df"]
+            out = em.generate_package(workspace=ws, cleaned_tables=cleaned_tables)
             st.session_state.export_package_path = out
 
         run_action("Build Export Package", [("Bundling export package...", _do_action)])
 
     if st.session_state.get("export_package_path"):
-        st.success(f"Exported to {st.session_state.export_package_path}")
+        pkg_path = st.session_state.export_package_path
+        st.success(f"Exported to {pkg_path}")
+        import os
+        if os.path.exists(pkg_path):
+            with open(pkg_path, "rb") as f:
+                st.download_button(
+                    label="Download Export Package (.zip)",
+                    data=f.read(),
+                    file_name=os.path.basename(pkg_path),
+                    mime="application/zip",
+                    key="btn_download_export_package"
+                )

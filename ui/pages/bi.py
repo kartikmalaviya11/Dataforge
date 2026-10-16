@@ -29,7 +29,8 @@ def render_power_bi_model(ws: 'ProjectWorkspace'):
                 df, _ = ws.load_table(tname)
                 cols = {}
                 for c in df.columns:
-                    cols[c] = ColumnSchema(name=c, type=str(df[c].dtype))
+                    is_uniq = bool(len(df) > 0 and df[c].nunique(dropna=False) == len(df))
+                    cols[c] = ColumnSchema(name=c, type=str(df[c].dtype), is_unique=is_uniq)
                 tables[tname] = TableSchema(name=tname, row_count=len(df), columns=cols)
 
             accepted_rels = [r for r in st.session_state.relationship_candidates if r.status == "ACCEPTED"]
@@ -99,7 +100,10 @@ def render_advanced_dax(ws: 'ProjectWorkspace'):
                 for tname in ws.registry.keys():
                     df, _ = ws.load_table(tname)
                     if df is not None:
-                        cols = {c: ColumnSchema(name=c, type=str(df[c].dtype)) for c in df.columns}
+                        cols = {
+                            c: ColumnSchema(name=c, type=str(df[c].dtype), is_unique=bool(len(df) > 0 and df[c].nunique(dropna=False) == len(df)))
+                            for c in df.columns
+                        }
                         tables[tname] = TableSchema(name=tname, row_count=len(df), columns=cols)
 
                 candidates = st.session_state.get("relationship_candidates", [])

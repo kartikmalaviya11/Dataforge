@@ -99,6 +99,13 @@ def load_dataset(
     except pd.errors.ParserError as e:
         raise IngestionError(f"Failed to parse file: {e}")
     except Exception as e:
+        if isinstance(e, IngestionError):
+            raise
+        if str(file_path).lower().endswith(".xls"):
+            raise IngestionError(
+                f"Legacy Excel (.xls) format is not supported without optional dependency 'xlrd'. "
+                f"Please convert the file to modern Excel (.xlsx) or CSV."
+            ) from e
         raise IngestionError(f"Unexpected error loading file: {e}")
 
     if df.empty:

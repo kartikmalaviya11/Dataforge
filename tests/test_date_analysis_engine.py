@@ -31,9 +31,9 @@ def test_generate_date_table_pandas(date_engine):
     df = pd.DataFrame({
         'date_col': ['2023-01-01', '2023-12-31', 'invalid', None, '2024-02-29']
     })
-    
+
     date_engine.duckdb_engine.conn.execute("CREATE TABLE source_data AS SELECT * FROM df")
-    
+
     config = DateDimensionConfig(
         config_id="conf_1",
         source_table="source_data",
@@ -43,14 +43,14 @@ def test_generate_date_table_pandas(date_engine):
         missing_date_behavior="DROP"
     )
     date_engine.register_config(config)
-    
+
     date_table = date_engine.generate_date_table_pandas(config.config_id)
-    
+
     # 2023-01-01 to 2024-02-29 is 425 days
     assert len(date_table) == 425
     assert 'ISO_Year' in date_table.columns
     assert 'ISO_Week' in date_table.columns
-    
+
     # Dec 31, 2023 is Sunday. ISO year 2023, week 52
     dec31 = date_table[date_table['Date'] == pd.Timestamp('2023-12-31')].iloc[0]
     assert dec31['ISO_Year'] == 2023
@@ -61,7 +61,7 @@ def test_generate_date_table_duckdb(date_engine):
         'date_col': ['2023-01-01', '2024-02-29']
     })
     date_engine.duckdb_engine.conn.execute("CREATE TABLE source_data_2 AS SELECT * FROM df")
-    
+
     config = DateDimensionConfig(
         config_id="conf_2",
         source_table="source_data_2",
@@ -71,23 +71,23 @@ def test_generate_date_table_duckdb(date_engine):
         missing_date_behavior="DROP"
     )
     date_engine.register_config(config)
-    
+
     date_table_duckdb = date_engine.generate_date_table_duckdb(config.config_id)
     date_table_pandas = date_engine.generate_date_table_pandas(config.config_id)
-    
+
     pd.testing.assert_frame_equal(date_table_pandas.reset_index(drop=True), date_table_duckdb.reset_index(drop=True), check_dtype=False)
 
 def test_persistence(date_engine, workspace):
     config = DateDimensionConfig("c1", "t1", "d1", "2020-01-01", "2020-12-31", "DROP")
     date_engine.register_config(config)
-    
+
     metric = TimeMetricDefinition("m1", "kpi_1", "MoM", "RETURN_NULL")
     date_engine.register_metric(metric)
-    
+
     # Check file exists
     config_file = workspace.project_root / ".dataforge" / "date_configs.json"
     assert config_file.exists()
-    
+
     # Reload
     engine2 = DateAnalysisEngine(workspace, DuckDBEngine(workspace))
     assert "c1" in engine2.configs
@@ -99,17 +99,17 @@ def test_time_metric_mom(date_engine):
     })
     # Add some values: Jan=31, Feb=28, Mar=31, Apr=30, May=31
     df['value'] = 1.0
-    
+
     metric = TimeMetricDefinition("m_mom", "base", "MoM", "RETURN_NULL")
     date_engine.register_metric(metric)
-    
+
     # Calculate pandas
     res = date_engine.calculate_time_metric_pandas(df, 'Date', 'value', metric.metric_id)
-    
+
     # Jan has no previous month -> MoM = NULL
     # Feb has Jan -> (28 - 31) / 31 = -3/31
     # Mar has Feb -> (31 - 28) / 28 = 3/28
-    
+
     res_feb = res[res['YearMonth'] == '2023-02'].iloc[0]
     assert np.isclose(res_feb['MoM_Growth'], (28 - 31) / 31)
 
@@ -118,12 +118,12 @@ def test_time_metric_yoy(date_engine):
         'Date': pd.date_range('2023-01-01', '2024-03-31', freq='D'),
     })
     df['value'] = 10.0
-    
+
     metric = TimeMetricDefinition("m_yoy", "base", "YoY", "RETURN_NULL")
     date_engine.register_metric(metric)
-    
+
     res = date_engine.calculate_time_metric_pandas(df, 'Date', 'value', metric.metric_id)
-    
+
     res_mar = res[res['YearMonth'] == '2024-03'].iloc[0]
     # Mar 2023 value = 31 * 10 = 310
     # Mar 2024 value = 31 * 10 = 310
@@ -135,16 +135,16 @@ def test_rolling_3_months(date_engine):
         'Date': pd.date_range('2023-01-01', '2023-06-30', freq='D'),
     })
     df['value'] = 1.0
-    
+
     metric = TimeMetricDefinition("m_roll", "base", "ROLLING_3_MONTH", "RETURN_NULL")
     date_engine.register_metric(metric)
-    
+
     res = date_engine.calculate_time_metric_pandas(df, 'Date', 'value', metric.metric_id)
-    
+
     # Jan (31), Feb (28), Mar (31) = 90
     res_mar = res[res['YearMonth'] == '2023-03'].iloc[0]
     assert res_mar['ROLLING_3_MONTH_SUM'] == 90.0
-    
+
     # Jan shouldn't have rolling 3 month if behavior is RETURN_NULL
     res_jan = res[res['YearMonth'] == '2023-01'].iloc[0]
     assert pd.isna(res_jan['ROLLING_3_MONTH_SUM'])
@@ -161,14 +161,142 @@ def test_rolling_calendar_period_unequal_months(date_engine, workspace):
     df.to_csv(path_d, index=False)
     safe_path = str(path_d).replace("'", "''")
     date_engine.duckdb_engine.conn.execute(f"CREATE OR REPLACE VIEW dates AS SELECT * FROM read_csv_auto('{safe_path}', header=True)")
-    
+
     date_engine.register_metric(TimeMetricDefinition("rm3", "kpi", "ROLLING_3_MONTH", "RETURN_NULL"))
-    
+
     res_pd = date_engine.calculate_time_metric_pandas(df, "Date", "Val", "rm3")
     res_ddb = date_engine.calculate_time_metric_duckdb("dates", "Date", "Val", "rm3")
-    
+
     apr_val_pd = res_pd.loc[res_pd['YearMonth'] == '2023-04', 'ROLLING_3_MONTH_SUM'].values[0]
     apr_val_ddb = res_ddb.loc[res_ddb['YearMonth'] == '2023-04', 'ROLLING_3_MONTH_SUM'].values[0]
-    
+
     assert np.isclose(apr_val_pd, 90.0)
-    assert np.isclose(apr_val_ddb, 90.0)
+    assert np.isclose(apr_val_ddb, 90.0)
+
+def test_date_analysis_missing_date_behavior_drop_vs_error(date_engine, workspace):
+    import hashlib
+    df = pd.DataFrame({
+        'date_col': ['2023-01-01', 'not-a-date', None, '2023-01-05']
+    })
+    path_d = workspace.project_root / "raw_dates.csv"
+    df.to_csv(path_d, index=False)
+    initial_hash = hashlib.sha256(path_d.read_bytes()).hexdigest()
+
+    safe_path = str(path_d).replace("'", "''")
+    date_engine.duckdb_engine.conn.execute(f"CREATE OR REPLACE VIEW raw_dates AS SELECT * FROM read_csv_auto('{safe_path}', header=True)")
+
+    # 1. Behavior DROP: should drop invalid/null and build 2023-01-01 to 2023-01-05 (5 days)
+    config_drop = DateDimensionConfig(
+        config_id="c_drop",
+        source_table="raw_dates",
+        date_column="date_col",
+        missing_date_behavior="DROP"
+    )
+    date_engine.register_config(config_drop)
+    dt_pd = date_engine.generate_date_table_pandas("c_drop")
+    assert len(dt_pd) == 5
+
+    dt_ddb = date_engine.generate_date_table_duckdb("c_drop")
+    assert len(dt_ddb) == 5
+
+    # 2. Behavior ERROR: should raise ValueError on invalid/null dates
+    config_err = DateDimensionConfig(
+        config_id="c_err",
+        source_table="raw_dates",
+        date_column="date_col",
+        missing_date_behavior="ERROR"
+    )
+    date_engine.register_config(config_err)
+
+    with pytest.raises(ValueError, match="contains invalid or missing dates"):
+        date_engine.generate_date_table_pandas("c_err")
+
+    with pytest.raises(ValueError, match="contains invalid date values"):
+        date_engine.generate_date_table_duckdb("c_err")
+
+    # 3. Verify raw file was NOT mutated
+    after_hash = hashlib.sha256(path_d.read_bytes()).hexdigest()
+    assert initial_hash == after_hash
+
+    # 4. Lowercase variants ("drop", "error")
+    config_drop_lower = DateDimensionConfig(
+        config_id="c_drop_lower",
+        source_table="raw_dates",
+        date_column="date_col",
+        missing_date_behavior="drop"
+    )
+    date_engine.register_config(config_drop_lower)
+    assert len(date_engine.generate_date_table_pandas("c_drop_lower")) == 5
+    assert len(date_engine.generate_date_table_duckdb("c_drop_lower")) == 5
+
+    # 5. Unsupported behaviors (e.g. pad, keep) raise ValueError indicating supported contract
+    for unsupported in ("pad", "keep", "unsupported_mode"):
+        cfg_unsupported = DateDimensionConfig(
+            config_id=f"c_{unsupported}",
+            source_table="raw_dates",
+            date_column="date_col",
+            missing_date_behavior=unsupported
+        )
+        date_engine.register_config(cfg_unsupported)
+        with pytest.raises(ValueError, match="Unsupported missing_date_behavior"):
+            date_engine.generate_date_table_pandas(f"c_{unsupported}")
+        with pytest.raises(ValueError, match="Unsupported missing_date_behavior"):
+            date_engine.generate_date_table_duckdb(f"c_{unsupported}")
+
+    # 6. Verify DuckDB and Pandas error on null-only (missing date) values with ERROR
+    df_null_only = pd.DataFrame({
+        'date_col': ['2023-01-01', None, '2023-01-05']
+    })
+    path_null = workspace.project_root / "null_dates.csv"
+    df_null_only.to_csv(path_null, index=False)
+    safe_null_path = str(path_null).replace("'", "''")
+    date_engine.duckdb_engine.conn.execute(f"CREATE OR REPLACE VIEW null_dates AS SELECT * FROM read_csv_auto('{safe_null_path}', header=True)")
+
+    cfg_null_err = DateDimensionConfig(
+        config_id="c_null_err",
+        source_table="null_dates",
+        date_column="date_col",
+        missing_date_behavior="ERROR"
+    )
+    date_engine.register_config(cfg_null_err)
+    with pytest.raises(ValueError, match="contains invalid or missing dates"):
+        date_engine.generate_date_table_pandas("c_null_err")
+    with pytest.raises(ValueError, match="contains invalid date values or missing dates"):
+        date_engine.generate_date_table_duckdb("c_null_err")
+
+
+def test_date_analysis_contract_alignment():
+    """Verify that DateAnalysisEngine and UI contracts are strictly synchronized."""
+    from src.date_analysis_engine import (
+        SUPPORTED_MISSING_DATE_BEHAVIORS,
+        validate_missing_date_behavior
+    )
+    import ast
+    from pathlib import Path
+
+    # 1. Engine contract defines exact supported behaviors
+    assert set(SUPPORTED_MISSING_DATE_BEHAVIORS) == {"drop", "error"}
+
+    # 2. Validation function behaviors
+    assert validate_missing_date_behavior("drop") == "drop"
+    assert validate_missing_date_behavior("DROP") == "drop"
+    assert validate_missing_date_behavior("error") == "error"
+    assert validate_missing_date_behavior("ERROR") == "error"
+    assert validate_missing_date_behavior(None) == "drop"
+    assert validate_missing_date_behavior("") == "drop"
+
+    with pytest.raises(ValueError, match="Unsupported missing_date_behavior 'pad'"):
+        validate_missing_date_behavior("pad")
+
+    with pytest.raises(ValueError, match="Unsupported missing_date_behavior 'keep'"):
+        validate_missing_date_behavior("keep")
+
+    # 3. Verify UI in ui/pages/analysis.py references SUPPORTED_MISSING_DATE_BEHAVIORS
+    ui_path = Path(__file__).resolve().parent.parent / "ui" / "pages" / "analysis.py"
+    ui_source = ui_path.read_text(encoding="utf-8")
+    assert "SUPPORTED_MISSING_DATE_BEHAVIORS" in ui_source
+    assert '["pad", "drop", "keep"]' not in ui_source
+
+    # 4. Verify AST of ui/pages/analysis.py parses cleanly
+    tree = ast.parse(ui_source)
+    assert tree is not None

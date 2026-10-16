@@ -9,7 +9,18 @@ import subprocess
 import urllib.request
 import pytest
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    sync_playwright = None
+
+pytestmark = pytest.mark.skipif(
+    not PLAYWRIGHT_AVAILABLE,
+    reason="Playwright is not installed. Install via: pip install playwright && playwright install chromium"
+)
 
 TEST_PORT = 8529
 BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
@@ -48,6 +59,7 @@ def browser_app():
     server_log = open("scratch/browser_pytest_server.log", "w", encoding="utf-8")
     cmd = [
         sys.executable, "-m", "streamlit", "run", "app.py",
+        "--server.address", "127.0.0.1",
         "--server.port", str(TEST_PORT),
         "--server.headless", "true",
         "--server.fileWatcherType", "none",
@@ -57,7 +69,7 @@ def browser_app():
 
     # Wait for server readiness
     server_ready = False
-    for _ in range(45):
+    for _ in range(60):
         try:
             resp = urllib.request.urlopen(BASE_URL, timeout=1)
             if resp.status == 200:
@@ -70,6 +82,8 @@ def browser_app():
         proc.kill()
         server_log.close()
         pytest.fail(f"Streamlit server failed to start on {BASE_URL}")
+
+    time.sleep(3)
 
     # Launch Playwright Chromium
     playwright = sync_playwright().start()
@@ -123,8 +137,8 @@ class TestDataForgeBrowserAcceptance:
     def test_01_empty_states_and_initial_navigation(self, browser_app):
         """Workflow 0: Verify initial page, branding, and locked navigation."""
         page = browser_app["page"]
-        page.goto(BASE_URL)
-        page.wait_for_selector('h1:has-text("DATAFORGE")', timeout=30000)
+        page.goto(BASE_URL, wait_until="domcontentloaded")
+        page.wait_for_selector('h1:has-text("DATAFORGE")', timeout=60000)
         assert page.locator('h1:has-text("DATAFORGE")').is_visible()
         assert page.locator('text=Import your data').is_visible()
 

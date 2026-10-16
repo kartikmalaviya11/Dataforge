@@ -8,14 +8,28 @@ from pathlib import Path
 from src.workspace import ProjectWorkspace
 from src.sql_engine import DuckDBEngine
 
+SUPPORTED_MISSING_DATE_BEHAVIORS = ("drop", "error")
+
+def validate_missing_date_behavior(behavior: Optional[str]) -> str:
+    """Validates missing date behavior against the supported contract ('drop', 'error')."""
+    norm = (behavior or "drop").strip().lower()
+    if norm in ("drop", "ignore"):
+        return "drop"
+    if norm in ("error", "fail"):
+        return "error"
+    raise ValueError(
+        f"Unsupported missing_date_behavior '{behavior}'. "
+        f"Supported options are: {', '.join(SUPPORTED_MISSING_DATE_BEHAVIORS)}."
+    )
+
 @dataclass
 class DateDimensionConfig:
     config_id: str
     source_table: str
     date_column: str
-    user_min_date: Optional[str]
-    user_max_date: Optional[str]
-    missing_date_behavior: str
+    user_min_date: Optional[str] = None
+    user_max_date: Optional[str] = None
+    missing_date_behavior: str = "DROP"
 
 @dataclass
 class DateTableMetadata:
@@ -82,9 +96,16 @@ class DateAnalysisEngine:
         df_source = self.duckdb_engine.conn.execute(f'SELECT "{config.date_column}" FROM "{config.source_table}"').fetchdf()
         
         dates = pd.to_datetime(df_source[config.date_column], errors='coerce')
+        missing_behavior = validate_missing_date_behavior(config.missing_date_behavior)
+
+        if missing_behavior == "error":
+            if dates.isna().any():
+                raise ValueError(f"Column '{config.date_column}' contains invalid or missing dates with missing_date_behavior='{config.missing_date_behavior}'.")
+
         valid_dates = dates.dropna()
-        
         if valid_dates.empty:
+            if missing_behavior == "error":
+                raise ValueError(f"No valid dates found in column '{config.date_column}'.")
             min_d, max_d = pd.Timestamp('2000-01-01'), pd.Timestamp('2000-01-01')
         else:
             min_d, max_d = valid_dates.min(), valid_dates.max()
@@ -103,10 +124,22 @@ class DateAnalysisEngine:
 
     def generate_date_table_duckdb(self, config_id: str) -> pd.DataFrame:
         config = self.configs[config_id]
+        missing_behavior = validate_missing_date_behavior(config.missing_date_behavior)
+
+        if missing_behavior == "error":
+            chk_q = f'SELECT COUNT(*) FROM "{config.source_table}" WHERE "{config.date_column}" IS NULL OR TRY_CAST("{config.date_column}" AS DATE) IS NULL'
+            invalid_count = self.duckdb_engine.conn.execute(chk_q).fetchone()[0]
+            if invalid_count > 0:
+                raise ValueError(f"Column '{config.date_column}' contains invalid date values or missing dates with missing_date_behavior='{config.missing_date_behavior}'.")
+
+        user_min_expr = f"DATE '{config.user_min_date}'" if config.user_min_date else "NULL"
+        user_max_expr = f"DATE '{config.user_max_date}'" if config.user_max_date else "NULL"
+
         q = f"""
         WITH min_max AS (
-            SELECT MIN(TRY_CAST("{config.date_column}" AS DATE)) as min_d,
-                   MAX(TRY_CAST("{config.date_column}" AS DATE)) as max_d
+            SELECT
+                COALESCE({user_min_expr}, MIN(TRY_CAST("{config.date_column}" AS DATE)), DATE '2000-01-01') as min_d,
+                COALESCE({user_max_expr}, MAX(TRY_CAST("{config.date_column}" AS DATE)), DATE '2000-01-01') as max_d
             FROM "{config.source_table}"
         )
         SELECT 
