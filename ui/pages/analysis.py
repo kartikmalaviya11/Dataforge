@@ -3,14 +3,14 @@ import streamlit as st
 from src.workspace import ProjectWorkspace
 import pandas as pd
 import os
-from ui.theme import badge
+from ui.theme import badge, clean_html
 
 def render_relationships(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Relationships</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if len(ws.registry) < 2:
         empty_state(
@@ -118,11 +118,11 @@ def render_relationships(ws: ProjectWorkspace):
             st.graphviz_chart(dot_str)
 
 def render_feature_engineering(ws: 'ProjectWorkspace'):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Feature Engineering</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
@@ -192,11 +192,11 @@ def render_feature_engineering(ws: 'ProjectWorkspace'):
             run_action("Extract Date Part", [("Generating code...", _do_action)])
 
 def render_sql_workspace(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">SQL Workspace</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.sql_engine import DuckDBEngine
     first_tbl = list(ws.registry.keys())[0] if ws.registry else "dataset"
     default_q = f'SELECT * FROM "{first_tbl}" LIMIT 5'
@@ -218,11 +218,11 @@ def render_sql_workspace(ws: ProjectWorkspace):
         st.dataframe(st.session_state.sql_result_df)
 
 def render_pandas_analysis(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Pandas Analysis</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     st.info("Select a table to analyze.")
     target_table = st.selectbox("Target Table", list(ws.registry.keys()), key="pa_table")
     if dataforge_button("Describe", type="primary"):
@@ -236,11 +236,11 @@ def render_pandas_analysis(ws: ProjectWorkspace):
     if st.session_state.get("pandas_describe_df") is not None:
         st.dataframe(st.session_state.pandas_describe_df)
 def render_kpi_center(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">KPI Center</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if dataforge_button("Generate KPIs", type="primary"):
         def _do_action():
             from src.kpi_engine import KPIEngine
@@ -259,7 +259,22 @@ def render_kpi_center(ws: ProjectWorkspace):
         st.success("KPIs generated.")
 
     if "kpis" in st.session_state:
-        st.dataframe(pd.DataFrame([__import__("dataclasses").asdict(k) for k in st.session_state.kpis]))
+        kpi_df = pd.DataFrame([__import__("dataclasses").asdict(k) for k in st.session_state.kpis])
+        st.dataframe(
+            kpi_df,
+            use_container_width=True,
+            column_config={
+                "kpi_name": st.column_config.TextColumn("KPI Name", width="medium"),
+                "category": st.column_config.TextColumn("Category", width="medium"),
+                "priority": st.column_config.TextColumn("Priority", width="small"),
+                "status": st.column_config.TextColumn("Status", width="medium"),
+                "required_columns": st.column_config.ListColumn("Required Columns", width="medium"),
+                "available_columns": st.column_config.ListColumn("Available Columns", width="medium"),
+                "calculation_logic": st.column_config.TextColumn("Calculation Logic", width="large"),
+                "explanation": st.column_config.TextColumn("Explanation", width="large"),
+                "missing_requirements": st.column_config.ListColumn("Missing Requirements", width="medium"),
+            }
+        )
 
         st.markdown("### KPI Snapshots")
         from src.kpi_engine import KPIManager, KPISnapshot
@@ -314,7 +329,19 @@ def render_kpi_center(ws: ProjectWorkspace):
         if not snapshots:
             st.info("No KPI snapshots logged yet.")
         else:
-            st.dataframe(pd.DataFrame([s.to_dict() for s in snapshots]))
+            snap_df = pd.DataFrame([s.to_dict() for s in snapshots])
+            st.dataframe(
+                snap_df,
+                use_container_width=True,
+                column_config={
+                    "snapshot_id": st.column_config.TextColumn("Snapshot ID", width="medium"),
+                    "kpi_id": st.column_config.TextColumn("KPI ID", width="medium"),
+                    "kpi_name": st.column_config.TextColumn("KPI Name", width="medium"),
+                    "dataset_version_id": st.column_config.TextColumn("Dataset Version", width="small"),
+                    "value": st.column_config.TextColumn("Value", width="large"),
+                    "recorded_at": st.column_config.TextColumn("Recorded At", width="medium"),
+                }
+            )
             if len(snapshots) >= 2:
                 st.markdown("#### Compare Snapshots")
                 snap_labels = {f"{s.snapshot_id[:8]} ({s.kpi_name} - v:{s.dataset_version_id or 'none'})": s.snapshot_id for s in snapshots}
@@ -343,11 +370,11 @@ def render_business_questions(ws: ProjectWorkspace):
         except Exception:
             pass
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Business Questions</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.business_questions import QuestionManager
     qm = QuestionManager(ws)
 
@@ -416,11 +443,11 @@ def render_segmentation(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Segmentation</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
@@ -475,11 +502,11 @@ def render_anomaly_detection(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Anomaly Detection</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
@@ -533,11 +560,11 @@ def render_date_analysis(ws: 'ProjectWorkspace'):
     from ui.components import dataforge_button, run_action, empty_state
     from src.date_analysis_engine import SUPPORTED_MISSING_DATE_BEHAVIORS
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Date Analysis</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
@@ -654,11 +681,11 @@ def render_rca(ws: 'ProjectWorkspace'):
     from src.kpi_engine import KPIManager, KPIDefinition, MetricDefinition
     from src.data_model import DataModel, TableSchema, ColumnSchema, RelationshipCandidate, RelationshipStatus
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Root Cause Analysis</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first to perform Root Cause Analysis.", "Go to Data Import", "Data Import")
@@ -940,11 +967,11 @@ def render_findings(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Findings</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.finding_engine import FindingEngine, FindingDefinition
     import time, uuid
 
@@ -977,11 +1004,11 @@ def render_findings(ws: 'ProjectWorkspace'):
         run_action("Record Finding", [("Saving finding...", _do_action)])
 
 def render_recommendations(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Recommendations</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if dataforge_button("View Recommendations"):
         def _do_action():
             st.success("No current recommendations. Increase Data Quality.")

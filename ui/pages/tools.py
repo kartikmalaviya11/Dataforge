@@ -1,12 +1,13 @@
+from ui.theme import clean_html
 import streamlit as st
 from src.workspace import ProjectWorkspace
 
 def render_domain_templates(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Domain Templates</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     templates = [
         "E-commerce", "Sales", "Customer Retention", 
         "Delivery", "Seller Performance", "Product Performance", "Reviews"
@@ -17,7 +18,6 @@ def render_domain_templates(ws: ProjectWorkspace):
         try:
             from src.domain_templates import DomainTemplateManager
             mgr = DomainTemplateManager(ws)
-            # Try to load if available, or just mock it for UI binding
             tpl = mgr.load_template(selected)
             if tpl:
                 st.success(f"Loaded {selected} template.")
@@ -30,11 +30,9 @@ def render_domain_templates(ws: ProjectWorkspace):
             st.error(f"Error: {e}")
 
 def render_settings(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Settings</h2>
     </div>
-    ''', unsafe_allow_html=True)
-    st.info("Global settings.")
-
-
+    '''), unsafe_allow_html=True)
+    st.info("Persistent global settings are not implemented yet. Workspace configuration is managed via project_config.json.")

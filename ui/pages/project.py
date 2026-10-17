@@ -1,23 +1,45 @@
 from ui.components import dataforge_button, run_action, empty_state
+from ui.theme import clean_html
 
 
 def render_data_import():
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
     c2 = st.container()
 
     with c2:
         with st.container():
-            st.markdown("""
-            <div style="margin-bottom: 2rem;">
-                <h1 style="font-size: 2rem; margin-bottom: 0;">DATAFORGE</h1>
-                <div style="color: var(--text-secondary); font-size: 1rem;">Professional Data Analytics Workspace</div>
+            import_header = """
+            <div style="margin-bottom: 1.75rem;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.25rem;">
+                    <div style="
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 10px;
+                        background: var(--primary-gradient);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        box-shadow: 0 4px 14px rgba(56, 103, 255, 0.4);
+                    ">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                            <polyline points="2 17 12 22 22 17"></polyline>
+                            <polyline points="2 12 12 17 22 12"></polyline>
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 style="font-size: 2rem; font-weight: 800; margin: 0; letter-spacing: -0.03em;">DATAFORGE</h1>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem; font-weight: 500;">Professional Data Analytics Workspace</div>
+                    </div>
+                </div>
             </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
-                <h2 style="margin: 0; font-size: 1.25rem;">Import your data<span style="display:none">Upload Your Data</span></h2>
-                <span style="color: var(--text-muted); font-size: 0.875rem;">Step 1 of 3</span>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                <h2 style="margin: 0; font-size: 1.3rem; font-weight: 700;">Import your data<span style="display:none">Upload Your Data</span></h2>
+                <span class="df-badge df-badge-info">Step 1 of 3</span>
             </div>
-            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">Bring CSV or Excel files into your workspace. We'll automatically infer schema and data types.</p>
-            """, unsafe_allow_html=True)
+            <p style="color: var(--text-secondary); margin-bottom: 1.25rem; font-size: 0.9rem;">Bring CSV or Excel files into your workspace. We'll automatically infer schema, detect types, and run preliminary quality checks.</p>
+            """
+            st.markdown(clean_html(import_header), unsafe_allow_html=True)
 
             if "uploader_key" not in st.session_state:
                 st.session_state.uploader_key = 0
@@ -25,6 +47,21 @@ def render_data_import():
             import os
             is_testing = os.getenv("DATAFORGE_TESTING") == "1"
             allowed_types = ["csv", "xlsx", "xls"] if not is_testing else None
+
+            # Drag & drop upload area with format indicators
+            badges_html = """
+            <div style="
+                display: flex;
+                gap: 0.75rem;
+                justify-content: center;
+                margin-bottom: 0.85rem;
+            ">
+                <span class="df-badge df-badge-info">CSV</span>
+                <span class="df-badge df-badge-success">XLSX</span>
+                <span class="df-badge df-badge-purple">XLS</span>
+            </div>
+            """
+            st.markdown(clean_html(badges_html), unsafe_allow_html=True)
 
             uploaded_files = st.file_uploader(
                 "Drag & Drop Files Here",
@@ -34,12 +71,10 @@ def render_data_import():
                 label_visibility="collapsed"
             )
             st.markdown(
-                "<div style='color: var(--text-secondary); font-size: 0.85rem; text-align: center; margin-top: -1rem; margin-bottom: 1rem;'>"
+                "<div style='color: var(--text-secondary); font-size: 0.825rem; text-align: center; margin-top: -0.75rem; margin-bottom: 1.25rem;'>"
                 "Supported: CSV &bull; XLSX &bull; XLS"
                 "</div>", unsafe_allow_html=True
             )
-
-
 
             if "removed_files" not in st.session_state:
                 st.session_state.removed_files = set()
@@ -47,32 +82,34 @@ def render_data_import():
             active_files = [f for f in uploaded_files if f.name not in st.session_state.removed_files]
 
             if active_files:
-                st.markdown("<div style='margin-top: 1.5rem; font-weight: 600; font-size: 0.95rem; color: var(--text-main);'>Selected Files</div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 1.25rem; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.95rem; color: var(--text-primary);'>Selected Files</div>", unsafe_allow_html=True)
 
-                # Table header
-                st.markdown("""
-                <div style='display: flex; color: var(--text-secondary); font-size: 0.85rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; margin-bottom: 0.5rem;'>
+                # Modern Table header
+                table_hdr_html = """
+                <div style='display: flex; color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 0.5rem;'>
                     <div style='flex: 3;'>Filename</div>
-                    <div style='flex: 1;'>Extension</div>
+                    <div style='flex: 1;'>Format</div>
                     <div style='flex: 1;'>Size</div>
                     <div style='flex: 1;'>Status</div>
                     <div style='flex: 1;'>Action</div>
                 </div>
-                """, unsafe_allow_html=True)
+                """
+                st.markdown(clean_html(table_hdr_html), unsafe_allow_html=True)
 
                 for f in active_files:
                     size_mb = f.size / (1024 * 1024)
                     ext = Path(f.name).suffix.upper().replace('.', '')
                     col1, col2 = st.columns([5, 1])
                     with col1:
-                        st.markdown(f"""
-                        <div style='display: flex; color: var(--text-main); font-size: 0.9rem; margin-bottom: 0.25rem; align-items: center; margin-top: 0.3rem;'>
-                            <div style='flex: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'><span style='color: var(--success); margin-right: 0.25rem;'>&check;</span> {f.name}</div>
-                            <div style='flex: 1;'>{ext}</div>
-                            <div style='flex: 1;'>{size_mb:.1f} MB</div>
-                            <div style='flex: 1;'>Ready</div>
+                        row_html = f"""
+                        <div style='display: flex; color: var(--text-primary); font-size: 0.875rem; margin-bottom: 0.35rem; align-items: center; padding: 0.35rem 0;'>
+                            <div style='flex: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;'><span style='color: var(--success); margin-right: 0.35rem;'>&check;</span> {f.name}</div>
+                            <div style='flex: 1;'><span class='df-badge df-badge-neutral'>{ext}</span></div>
+                            <div style='flex: 1; color: var(--text-secondary);'>{size_mb:.1f} MB</div>
+                            <div style='flex: 1;'><span class='df-badge df-badge-success'>Ready</span></div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """
+                        st.markdown(clean_html(row_html), unsafe_allow_html=True)
                     with col2:
                         if st.button("Remove", key=f"remove_{f.name}"):
                             st.session_state.removed_files.add(f.name)
@@ -156,7 +193,7 @@ def render_data_import():
                     st.session_state.current_page = "Overview"
                     st.rerun()
 
-        st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
         with st.expander("Advanced Project Options"):
             project_path = st.text_input("Project Folder", placeholder="e.g., C:/Data/MyProject", label_visibility="collapsed")
             if st.button("Open Existing Project", use_container_width=True):
@@ -366,48 +403,186 @@ def render_overview(ws: ProjectWorkspace):
         except Exception:
             pass
 
-    st.markdown("### Project Overview")
+    import datetime
+    today_str = datetime.datetime.now().strftime("%a, %d %b %Y")
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: metric_card("Tables", str(tables_count))
-    with c2: metric_card("Rows", rows_display)
+    # 1. Hero Atmospheric Sunset Mountain Banner (as in reference image)
+    hero_html = (
+        f"<div style='background: linear-gradient(135deg, #0d122b 0%, #1a1638 50%, #0c1a35 100%); border: 1px solid rgba(120, 87, 255, 0.25); border-radius: 14px; padding: 1.5rem 1.75rem; margin-bottom: 1.25rem; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);'>"
+        f"<div style='position: absolute; top: -40px; right: 15%; width: 280px; height: 180px; background: radial-gradient(circle, rgba(236, 72, 153, 0.2) 0%, rgba(120, 87, 255, 0.15) 50%, transparent 80%); border-radius: 50%; filter: blur(40px); pointer-events: none;'></div>"
+        f"<div style='position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;'>"
+        f"<div>"
+        f"<h1 style='font-size: 1.85rem; font-weight: 800; color: #FFFFFF; margin: 0 0 0.3rem 0; letter-spacing: -0.025em;'>Welcome to DATAFORGE 👋</h1>"
+        f"<div style='color: #9AAAC2; font-size: 0.925rem;'>Turn your data into powerful insights</div>"
+        f"</div>"
+        f"<div style='display: flex; align-items: center; gap: 0.5rem; background: rgba(6, 16, 32, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); padding: 0.45rem 0.9rem; border-radius: 8px; font-size: 0.825rem; color: #F4F7FF;'>"
+        f"<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/></svg>"
+        f"<span>{today_str}</span>"
+        f"</div>"
+        f"</div>"
+        f"</div>"
+    )
+    st.markdown(clean_html(hero_html), unsafe_allow_html=True)
+
+    st.markdown('<h3 style="margin-top: 0; margin-bottom: 0.75rem; color: var(--text-primary); font-size: 1.05rem; font-weight: 650;">Project Overview</h3>', unsafe_allow_html=True)
+
+    # 2. Top 5 Metric Cards (matching reference image)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        metric_card("Total Tables", str(tables_count), "info", delta="+0")
+    with c2:
+        metric_card("Total Rows", rows_display, "info", delta="+0")
     with c3:
-        status_color = "success" if quality_status == "Ready" else ("error" if quality_status == "Blocked" else "warning" if quality_status in ("Needs Review", "Partially Scanned") else "neutral")
-        metric_card("Overall Quality", quality_status, status_color)
-    issues_status = "error" if num_issues > 0 else ("success" if quality_status == "Ready" else "neutral")
-    with c4: metric_card("Total Issues", str(num_issues), issues_status)
+        metric_card("Relationships", str(rel_count), "purple", delta=f"+{rel_count}%" if rel_count else "0")
+    with c4:
+        metric_card("Data Issues", str(num_issues), "error" if num_issues > 0 else "success", delta="Needs Review" if num_issues > 0 else "Clean")
+    with c5:
+        score_status = "success" if readiness_score.endswith("%") and readiness_score != "0%" else ("error" if quality_status == "Blocked" else "warning")
+        metric_card("Quality Score", readiness_score, score_status, delta=quality_status)
 
-    c5, c6, c7, c8 = st.columns(4)
-    with c5: metric_card("Relationships", str(rel_count), "success" if rel_count > 0 else "neutral")
-    with c6: metric_card("KPIs Defined", str(kpi_count), "success" if kpi_count > 0 else "neutral")
-    with c7: metric_card("Findings", str(find_count), "success" if find_count > 0 else "neutral")
-    with c8: metric_card("Readiness", readiness_score, "success" if readiness_score.endswith("%") and readiness_score != "0%" else "neutral")
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### Quick Actions")
-    st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True)
+    # 3. Middle Section: Recent Projects & AI banner (Left) vs Quick Actions & Live Activity (Right)
+    col_left, col_right = st.columns([1.65, 1])
 
-    q1, q2, q3, q4 = st.columns(4)
-    if q1.button("Run Quality Scan", type="primary", use_container_width=True):
-        st.session_state.current_page = "Data Quality"
-        st.rerun()
-    if q2.button("Detect Relationships", use_container_width=True):
-        st.session_state.current_page = "Relationships"
-        st.rerun()
-    if q3.button("Generate KPIs", use_container_width=True):
-        st.session_state.current_page = "KPI Center"
-        st.rerun()
-    if q4.button("Open SQL Workspace", use_container_width=True):
-        st.session_state.current_page = "SQL Workspace"
-        st.rerun()
+    with col_left:
+        st.markdown(
+            "<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem;'>"
+            "<h4 style='margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: none; letter-spacing: 0;'>Recent Projects</h4>"
+            "<span style='color: var(--primary); font-size: 0.8rem; font-weight: 600;'>Active Workspaces &rarr;</span>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+        recent_items = []
+        workspaces_dir = Path(".dataforge_workspaces")
+        if workspaces_dir.exists():
+            for p in sorted(workspaces_dir.iterdir(), key=lambda x: x.stat().st_mtime if x.exists() else 0, reverse=True)[:5]:
+                if p.is_dir():
+                    is_active = ws and ws.project_root.resolve() == p.resolve()
+                    t_count = 0
+                    r_count = 0
+                    cfg = p / "project_config.json"
+                    if cfg.exists():
+                        try:
+                            d = json.loads(cfg.read_text())
+                            reg = d.get("registry", {})
+                            t_count = len(reg)
+                            for itm in reg.values():
+                                r_count += itm.get("row_count", 0) or 0
+                        except Exception:
+                            pass
+                    p_name = p.name[:8]
+                    if is_active and tables_count > 0:
+                        first_tbl = list(ws.registry.keys())[0]
+                        p_name = f"{first_tbl.capitalize()} & Related"
+
+                    recent_items.append({
+                        "Project Name": p_name + (" (Active)" if is_active else ""),
+                        "Tables": t_count if t_count > 0 else (tables_count if is_active else 0),
+                        "Rows": f"{r_count:,}" if r_count > 0 else (rows_display if is_active else "0"),
+                        "Status": "Ready" if (t_count > 0 or (is_active and tables_count > 0)) else "Not Scanned"
+                    })
+
+        if not recent_items:
+            recent_items = [{
+                "Project Name": f"{list(ws.registry.keys())[0].capitalize()} & Related" if tables_count > 0 else "Active Workspace",
+                "Tables": tables_count,
+                "Rows": rows_display,
+                "Status": quality_status
+            }]
+
+        import pandas as pd
+        st.dataframe(
+            pd.DataFrame(recent_items),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Project Name": st.column_config.TextColumn("Project Name", width="medium"),
+                "Tables": st.column_config.NumberColumn("Tables", width="small"),
+                "Rows": st.column_config.TextColumn("Rows", width="small"),
+                "Status": st.column_config.TextColumn("Status", width="small"),
+            }
+        )
+
+        # "Let AI Work For You" Card (from reference design)
+        ai_banner_html = (
+            f"<div style='background: linear-gradient(135deg, rgba(56, 103, 255, 0.14) 0%, rgba(120, 87, 255, 0.14) 100%); border: 1px solid rgba(56, 103, 255, 0.28); border-radius: 12px; padding: 1.15rem 1.35rem; margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;'>"
+            f"<div style='display: flex; align-items: center; gap: 1rem;'>"
+            f"<div style='width: 40px; height: 40px; border-radius: 10px; background: var(--primary-gradient); display: flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 800; color: #FFFFFF; box-shadow: 0 4px 14px rgba(56, 103, 255, 0.4);'>AI</div>"
+            f"<div>"
+            f"<div style='font-weight: 750; color: #FFFFFF; font-size: 0.925rem;'>Let AI Work For You</div>"
+            f"<div style='color: var(--text-secondary); font-size: 0.8rem;'>Get smart suggestions, auto-cleaning and insights powered by AI</div>"
+            f"</div>"
+            f"</div>"
+            f"<div style='background: rgba(56, 103, 255, 0.25); border: 1px solid rgba(56, 103, 255, 0.4); color: #FFFFFF; padding: 0.4rem 0.85rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600;'>Assisted Analysis Active</div>"
+            f"</div>"
+        )
+        st.markdown(clean_html(ai_banner_html), unsafe_allow_html=True)
+
+    with col_right:
+        st.markdown(
+            "<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem;'>"
+            "<h4 style='margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: none; letter-spacing: 0;'>Quick Actions</h4>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+        if st.button("⚡ Run Quality Scan", type="primary", use_container_width=True, key="ov_btn_scan"):
+            st.session_state.current_page = "Data Quality"
+            st.rerun()
+
+        col_q1, col_q2 = st.columns(2)
+        with col_q1:
+            if st.button("🔗 Detect Relationships", use_container_width=True, key="ov_btn_rel"):
+                st.session_state.current_page = "Relationships"
+                st.rerun()
+            if st.button("📊 Generate KPIs", use_container_width=True, key="ov_btn_kpi"):
+                st.session_state.current_page = "KPI Center"
+                st.rerun()
+        with col_q2:
+            if st.button("💻 Open SQL Workspace", use_container_width=True, key="ov_btn_sql"):
+                st.session_state.current_page = "SQL Workspace"
+                st.rerun()
+            if st.button("📦 Export Package", use_container_width=True, key="ov_btn_export"):
+                st.session_state.current_page = "Export Package"
+                st.rerun()
+
+        # Recent Activity Card
+        recent_log = []
+        if scan_results:
+            for t, r in scan_results.items():
+                if r.get("scan_status") == "COMPLETED":
+                    dur = r.get("elapsed", 0.0)
+                    recent_log.append(f"Quality scan completed for <b>{t}</b> ({dur:.2f}s)")
+        if not recent_log:
+            recent_log = [
+                f"Workspace loaded ({tables_count} tables)",
+                "System integrity verified"
+            ]
+
+        activity_html = "".join([f"<li style='margin-bottom: 0.4rem; color: var(--text-secondary); font-size: 0.8rem;'>{item}</li>" for item in recent_log[:3]])
+
+        rec_card_html = (
+            f"<div class='df-card' style='margin-top: 1rem; padding: 1rem 1.15rem;'>"
+            f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem;'>"
+            f"<h4 style='margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--text-primary); text-transform: none; letter-spacing: 0;'>Recent Activity</h4>"
+            f"<span style='color: var(--text-muted); font-size: 0.72rem;'>Live Log</span>"
+            f"</div>"
+            f"<ul style='padding-left: 1.1rem; margin: 0;'>"
+            f"{activity_html}"
+            f"</ul>"
+            f"</div>"
+        )
+        st.markdown(clean_html(rec_card_html), unsafe_allow_html=True)
 
 
 def render_data_quality(ws: ProjectWorkspace):
-    st.markdown("""
+    st.markdown(clean_html("""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Data Quality Scan</h2>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
 
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
@@ -610,17 +785,52 @@ def render_data_quality(ws: ProjectWorkspace):
                 "Message": i.message
             })
         import pandas as pd
-        st.dataframe(pd.DataFrame(issue_rows), use_container_width=True, hide_index=True)
+        df_issues = pd.DataFrame(issue_rows)
+
+        dups = [r for r in issue_rows if "dup" in r["Type"].lower()]
+        nulls = [r for r in issue_rows if "null" in r["Type"].lower() or "missing" in r["Type"].lower()]
+        types = [r for r in issue_rows if "type" in r["Type"].lower() or "inconsist" in r["Type"].lower()]
+
+        tab_all, tab_dup, tab_null, tab_typ = st.tabs([
+            f"All Issues ({len(all_issues)})",
+            f"Duplicates ({len(dups)})",
+            f"Missing Values ({len(nulls)})",
+            f"Data Types ({len(types)})"
+        ])
+        issue_col_config = {
+            "Type": st.column_config.TextColumn("Type", width="medium"),
+            "Column": st.column_config.TextColumn("Column", width="medium"),
+            "Severity": st.column_config.TextColumn("Severity", width="small"),
+            "Classification": st.column_config.TextColumn("Classification", width="medium"),
+            "Message": st.column_config.TextColumn("Message", width="large"),
+        }
+        with tab_all:
+            st.dataframe(df_issues, use_container_width=True, hide_index=True, column_config=issue_col_config)
+        with tab_dup:
+            if dups:
+                st.dataframe(pd.DataFrame(dups), use_container_width=True, hide_index=True, column_config=issue_col_config)
+            else:
+                st.info("No duplicate issues detected in this table.")
+        with tab_null:
+            if nulls:
+                st.dataframe(pd.DataFrame(nulls), use_container_width=True, hide_index=True, column_config=issue_col_config)
+            else:
+                st.info("No missing value issues detected in this table.")
+        with tab_typ:
+            if types:
+                st.dataframe(pd.DataFrame(types), use_container_width=True, hide_index=True, column_config=issue_col_config)
+            else:
+                st.info("No type inconsistency issues detected in this table.")
     else:
         st.success("No issues detected! Table is 100% clean and ready for analysis.")
 
 
 def render_issues(ws: ProjectWorkspace):
-    st.markdown("""
+    st.markdown(clean_html("""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Issues</h2>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
         return
@@ -654,11 +864,11 @@ def render_issues(ws: ProjectWorkspace):
 
 
 def render_cleaning(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Data Cleaning & Repair</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
         return
@@ -864,11 +1074,11 @@ def render_cleaning(ws: ProjectWorkspace):
                     st.error(str(e))
 
 def render_validation(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Validation Results & Custom Patterns</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if not ws.registry:
         empty_state("No tables available", "Import data first.", "Go to Data Import", "Data Import")
         return

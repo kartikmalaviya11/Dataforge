@@ -1,3 +1,4 @@
+from ui.theme import clean_html
 from ui.components import dataforge_button, run_action, empty_state
 import streamlit as st
 from src.workspace import ProjectWorkspace
@@ -12,11 +13,11 @@ def render_power_bi_model(ws: 'ProjectWorkspace'):
         empty_state('Model prerequisites are not ready', 'Analyze relationships before generating a BI model.', 'Go to Relationships', 'Relationships')
         return
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Power BI Model</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     if dataforge_button("Generate Model", type="primary"):
         def _do_action():
@@ -63,11 +64,11 @@ def render_advanced_dax(ws: 'ProjectWorkspace'):
     from src.model_generator import ModelGenerator
     from src.data_model import DataModel, TableSchema, ColumnSchema
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">DAX Generation</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     base_dataforge = os.path.join(ws.project_root, ".dataforge")
     if "dax_measures" not in st.session_state:
@@ -136,11 +137,11 @@ def render_dashboard_blueprint(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Dashboard Blueprint</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     kpis = st.session_state.get('kpis')
     if not kpis:
@@ -178,11 +179,11 @@ def render_insight_visuals(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Insight -> Visual Mapping</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     from src.finding_engine import FindingEngine
     fe = FindingEngine(ws)
@@ -210,11 +211,11 @@ def render_data_lineage(ws: ProjectWorkspace):
     if not st.session_state.get('table_results'):
         empty_state('Lineage metadata is not available yet', 'Run a Data Quality Scan first.', 'Go to Data Quality', 'Data Quality')
         return
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Data Lineage</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.dataset_versioning import DatasetVersioningManager
     dvm = DatasetVersioningManager(ws.project_root)
     versions = dvm.get_all_versions()
@@ -238,7 +239,10 @@ def render_data_lineage(ws: ProjectWorkspace):
     # Try to use graphviz if available, else fallback to text
     try:
         import graphviz
-        graph = graphviz.Digraph(node_attr={'shape': 'box', 'style': 'rounded,filled', 'fillcolor': '#f0f2f6', 'fontname': 'sans-serif'})
+        graph = graphviz.Digraph(
+            node_attr={'shape': 'box', 'style': 'rounded,filled', 'fillcolor': '#10233D', 'fontcolor': '#F4F7FF', 'color': '#3867FF', 'fontname': 'sans-serif'},
+            edge_attr={'color': '#3867FF', 'fontcolor': '#9AAAC2', 'fontname': 'sans-serif', 'fontsize': '9'}
+        )
         for n_id, label in nodes:
             graph.node(n_id, label)
         for src, dst, op in edges:

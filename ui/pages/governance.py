@@ -1,13 +1,14 @@
+from ui.theme import clean_html
 from ui.components import dataforge_button, run_action, empty_state
 import streamlit as st
 from src.workspace import ProjectWorkspace
 
 def render_run_history(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Run History</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.run_history import RunHistoryManager
     hm = RunHistoryManager(ws.project_root)
     runs = hm.get_all_runs()
@@ -22,11 +23,11 @@ def render_dataset_versions(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Dataset Versions</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.dataset_versioning import DatasetVersioningManager, DatasetVersion
     import uuid, datetime
 
@@ -70,11 +71,11 @@ def render_readiness(ws: ProjectWorkspace):
     if not st.session_state.get('table_results'):
         empty_state('No analyzed dataset available', 'Run a Data Quality Scan first.', 'Go to Data Quality', 'Data Quality')
         return
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Historical Readiness</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     from src.historical_readiness import HistoricalReadinessManager
     rm = HistoricalReadinessManager(ws.project_root)
     snapshots = rm.get_all()
@@ -89,11 +90,11 @@ def render_assumptions(ws: ProjectWorkspace):
     import pandas as pd
     from src.assumption_register import AssumptionRegisterManager
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Assumptions Register</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     ar = AssumptionRegisterManager(ws.project_root)
 
@@ -151,11 +152,11 @@ def render_business_impact(ws: 'ProjectWorkspace'):
     import pandas as pd
     from ui.components import dataforge_button, run_action, empty_state
 
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Business Impact</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
 
     kpis = st.session_state.get('kpis', [])
     if not kpis:
@@ -233,11 +234,11 @@ def render_documentation(ws: ProjectWorkspace):
     if not st.session_state.get('table_results'):
         empty_state('Documentation requires project metadata', 'Run a Data Quality Scan first.', 'Go to Data Quality', 'Data Quality')
         return
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Documentation Generator</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if dataforge_button("Generate All Docs", type="primary"):
         def _do_action():
             import os
@@ -258,11 +259,11 @@ def render_documentation(ws: ProjectWorkspace):
         st.success("Documentation Generated in `.dataforge/docs/`")
 
 def render_export_package(ws: ProjectWorkspace):
-    st.markdown('''
+    st.markdown(clean_html('''
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
         <h2 style="margin: 0; font-size: 1.375rem; font-weight: 650; color: var(--text-primary);">Export Package</h2>
     </div>
-    ''', unsafe_allow_html=True)
+    '''), unsafe_allow_html=True)
     if dataforge_button("Build Export Package", type="primary"):
         def _do_action():
             from src.project_export import ProjectExportManager
